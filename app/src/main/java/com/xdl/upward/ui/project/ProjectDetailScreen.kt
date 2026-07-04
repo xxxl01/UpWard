@@ -36,10 +36,12 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.MoreHoriz
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.material3.Icon
+import androidx.compose.ui.res.painterResource
+import com.composables.icons.lucide.R as LucideR
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -144,6 +146,7 @@ fun ProjectDetailScreen(
         modifier = Modifier
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background)
+            .windowInsetsPadding(WindowInsets.statusBars)
     ) {
         ProjectHeaderBar(
             title = project?.name ?: "项目详情",
@@ -258,27 +261,27 @@ private fun ProjectHeaderBar(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 8.dp, vertical = 5.dp),
+                .padding(horizontal = 16.dp, vertical = 10.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Box(
                 modifier = Modifier
-                    .size(30.dp)
+                    .size(40.dp)
                     .clip(CircleShape)
                     .clickable { onBack() },
                 contentAlignment = Alignment.Center
             ) {
                 Icon(
-                    imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                    painter = painterResource(LucideR.drawable.lucide_ic_arrow_left),
                     contentDescription = "返回",
                     tint = MaterialTheme.colorScheme.onSurface,
-                    modifier = Modifier.size(21.dp)
+                    modifier = Modifier.size(22.dp)
                 )
             }
             Text(
                 text = title,
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.SemiBold,
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.Bold,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier
@@ -288,15 +291,15 @@ private fun ProjectHeaderBar(
             Box {
                 Box(
                     modifier = Modifier
-                        .size(30.dp)
+                        .size(40.dp)
                         .clip(CircleShape)
                         .clickable { menuExpanded = true },
                     contentAlignment = Alignment.Center
                 ) {
                     Icon(
-                        imageVector = Icons.Filled.MoreHoriz,
+                        painter = painterResource(LucideR.drawable.lucide_ic_ellipsis_vertical),
                         contentDescription = "更多操作",
-                        tint = MaterialTheme.colorScheme.onSurface,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.size(22.dp)
                     )
                 }
@@ -335,7 +338,7 @@ private fun ProjectHeaderBar(
                 }
             }
         }
-        HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.18f))
+        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
     }
 }
 
@@ -399,7 +402,12 @@ private fun ProjectChatInputBar(
                 .clickable(enabled = canSend) { onSend() },
             contentAlignment = Alignment.Center
         ) {
-            Text("发送", color = MaterialTheme.colorScheme.onPrimary, fontSize = 13.sp)
+            Icon(
+                painter = painterResource(LucideR.drawable.lucide_ic_send),
+                contentDescription = "发送",
+                tint = MaterialTheme.colorScheme.onPrimary,
+                modifier = Modifier.size(18.dp)
+            )
         }
     }
 }

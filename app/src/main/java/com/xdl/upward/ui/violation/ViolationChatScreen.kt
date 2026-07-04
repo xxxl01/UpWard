@@ -29,8 +29,9 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
@@ -53,6 +54,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.res.painterResource
+import com.composables.icons.lucide.R as LucideR
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
@@ -125,6 +128,7 @@ fun ViolationChatScreen(
         modifier = Modifier
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background)
+            .windowInsetsPadding(WindowInsets.statusBars)
     ) {
         ViolationHeaderBar(
             title = "违规告诫 $violationCount/3",
@@ -276,45 +280,49 @@ private fun ViolationHeaderBar(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 8.dp, vertical = 5.dp),
+                .padding(horizontal = 16.dp, vertical = 10.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Box(
                 modifier = Modifier
-                    .size(30.dp)
+                    .size(40.dp)
                     .clip(CircleShape)
                     .clickable { onBack() },
                 contentAlignment = Alignment.Center
             ) {
                 Icon(
-                    imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                    painter = painterResource(LucideR.drawable.lucide_ic_arrow_left),
                     contentDescription = "返回",
                     tint = MaterialTheme.colorScheme.onSurface,
-                    modifier = Modifier.size(21.dp)
+                    modifier = Modifier.size(22.dp)
                 )
             }
             Text(
                 text = title,
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.SemiBold,
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.Bold,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier
                     .weight(1f)
                     .padding(horizontal = 8.dp)
             )
-            Text(
-                text = "最近消息",
-                color = MaterialTheme.colorScheme.primary,
-                style = MaterialTheme.typography.labelLarge,
-                fontWeight = FontWeight.Medium,
+            Box(
                 modifier = Modifier
-                    .clip(RoundedCornerShape(6.dp))
-                    .clickable { onShowProjectTimes() }
-                    .padding(horizontal = 8.dp, vertical = 6.dp)
-            )
+                    .size(40.dp)
+                    .clip(CircleShape)
+                    .clickable { onShowProjectTimes() },
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    painter = painterResource(LucideR.drawable.lucide_ic_calendar),
+                    contentDescription = "最近消息",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(22.dp)
+                )
+            }
         }
-        HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.18f))
+        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
     }
 }
 
@@ -378,7 +386,12 @@ private fun ViolationChatInputBar(
                 .clickable(enabled = canSend) { onSend() },
             contentAlignment = Alignment.Center
         ) {
-            Text("发送", color = MaterialTheme.colorScheme.onPrimary, fontSize = 13.sp)
+            Icon(
+                painter = painterResource(LucideR.drawable.lucide_ic_send),
+                contentDescription = "发送",
+                tint = MaterialTheme.colorScheme.onPrimary,
+                modifier = Modifier.size(18.dp)
+            )
         }
     }
 }
