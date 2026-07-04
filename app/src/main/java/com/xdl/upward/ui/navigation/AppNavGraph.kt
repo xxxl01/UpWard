@@ -10,12 +10,13 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.xdl.upward.ui.api.ApiConfigEditScreen
-import com.xdl.upward.ui.api.ApiConfigListScreen
+import com.xdl.upward.ui.config.ConfigSettingsScreen
 import com.xdl.upward.ui.project.ProjectDetailScreen
 import com.xdl.upward.ui.project.ProjectEditScreen
 import com.xdl.upward.ui.project.ProjectListScreen
 import com.xdl.upward.ui.record.DailyRecordEditScreen
 import com.xdl.upward.ui.record.DailyRecordListScreen
+import com.xdl.upward.ui.violation.ViolationChatScreen
 
 @Composable
 fun AppNavGraph() {
@@ -36,8 +37,30 @@ fun AppNavGraph() {
                 onOpenProject = { projectId ->
                     navController.navigate(AppRoute.projectDetail(projectId))
                 },
-                onOpenApiConfig = {
-                    navController.navigate(AppRoute.API_CONFIG_LIST)
+                onOpenConfigSettings = {
+                    navController.navigate(AppRoute.CONFIG_SETTINGS)
+                },
+                onOpenViolationChat = {
+                    navController.navigate(AppRoute.VIOLATION_CHAT)
+                }
+            )
+        }
+
+        composable(AppRoute.VIOLATION_CHAT) {
+            ViolationChatScreen(
+                onBack = { navController.popBackStack() }
+            )
+        }
+
+        composable(AppRoute.CONFIG_SETTINGS) {
+            ConfigSettingsScreen(
+                onBack = { navController.popBackStack() },
+                onSaved = { navController.popBackStack() },
+                onCreateApi = {
+                    navController.navigate(AppRoute.apiConfigEdit())
+                },
+                onEditApi = { apiId ->
+                    navController.navigate(AppRoute.apiConfigEdit(apiId))
                 }
             )
         }
@@ -120,18 +143,6 @@ fun AppNavGraph() {
                 recordId = recordId,
                 onBack = { navController.popBackStack() },
                 onSaved = { navController.popBackStack() }
-            )
-        }
-
-        composable(AppRoute.API_CONFIG_LIST) {
-            ApiConfigListScreen(
-                onBack = { navController.popBackStack() },
-                onCreateApi = {
-                    navController.navigate(AppRoute.apiConfigEdit())
-                },
-                onEditApi = { apiId ->
-                    navController.navigate(AppRoute.apiConfigEdit(apiId))
-                }
             )
         }
 

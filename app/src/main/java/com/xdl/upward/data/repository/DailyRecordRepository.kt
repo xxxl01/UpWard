@@ -4,7 +4,9 @@ import com.xdl.upward.data.local.DailyRecordDao
 import com.xdl.upward.data.local.DailyRecordEntity
 import kotlinx.coroutines.flow.Flow
 import java.time.LocalDate
+import java.time.LocalTime
 import java.time.OffsetDateTime
+import java.time.format.DateTimeFormatter
 
 class DailyRecordRepository(
     private val dailyRecordDao: DailyRecordDao
@@ -67,5 +69,20 @@ class DailyRecordRepository(
         }
     }
 
-    fun todayText(): String = LocalDate.now().toString()
+    suspend fun deleteRecord(recordId: Long) {
+        dailyRecordDao.deleteById(recordId)
+    }
+
+    fun todayText(): String {
+        val now = OffsetDateTime.now()
+        return if (now.toLocalTime().isBefore(LocalTime.of(4, 0))) {
+            now.toLocalDate().minusDays(1).toString()
+        } else {
+            now.toLocalDate().toString()
+        }
+    }
+
+    fun todayDisplayText(): String {
+        return LocalDate.parse(todayText()).format(DateTimeFormatter.ofPattern("yyyy年MM月dd日"))
+    }
 }

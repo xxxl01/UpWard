@@ -10,17 +10,25 @@ class ProjectRepository(
 ) {
     fun observeProjects(): Flow<List<ProjectEntity>> = projectDao.observeProjects()
 
+    suspend fun getProjects(): List<ProjectEntity> = projectDao.getProjects()
+
     fun observeProject(id: Long): Flow<ProjectEntity?> = projectDao.observeProject(id)
 
     suspend fun getProject(id: Long): ProjectEntity? = projectDao.getProject(id)
 
-    suspend fun saveProject(id: Long, name: String, systemPrompt: String) {
+    suspend fun saveProject(
+        id: Long,
+        name: String,
+        systemPrompt: String,
+        dailyRecordPrompt: String
+    ) {
         val now = OffsetDateTime.now().toString()
         if (id == 0L) {
             projectDao.insert(
                 ProjectEntity(
                     name = name,
                     systemPrompt = systemPrompt,
+                    dailyRecordPrompt = dailyRecordPrompt,
                     createdAt = now
                 )
             )
@@ -29,7 +37,8 @@ class ProjectRepository(
             projectDao.update(
                 oldProject.copy(
                     name = name,
-                    systemPrompt = systemPrompt
+                    systemPrompt = systemPrompt,
+                    dailyRecordPrompt = dailyRecordPrompt
                 )
             )
         }

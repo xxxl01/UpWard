@@ -11,6 +11,8 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 
 class ProjectEditViewModel(application: Application) : AndroidViewModel(application) {
+    private val defaultDailyRecordPrompt = "请根据今天的对话，总结用户在本项目中的进展、问题、情绪状态和下一步建议。"
+
     private val repository = ProjectRepository(
         AppDatabase.getInstance(application).projectDao()
     )
@@ -21,6 +23,9 @@ class ProjectEditViewModel(application: Application) : AndroidViewModel(applicat
     private val _systemPrompt = MutableStateFlow("")
     val systemPrompt: StateFlow<String> = _systemPrompt.asStateFlow()
 
+    private val _dailyRecordPrompt = MutableStateFlow(defaultDailyRecordPrompt)
+    val dailyRecordPrompt: StateFlow<String> = _dailyRecordPrompt.asStateFlow()
+
     private var loadedProjectId = 0L
 
     fun loadProject(projectId: Long) {
@@ -30,6 +35,7 @@ class ProjectEditViewModel(application: Application) : AndroidViewModel(applicat
             val project = repository.getProject(projectId) ?: return@launch
             _name.value = project.name
             _systemPrompt.value = project.systemPrompt
+            _dailyRecordPrompt.value = project.dailyRecordPrompt
         }
     }
 
@@ -41,13 +47,18 @@ class ProjectEditViewModel(application: Application) : AndroidViewModel(applicat
         _systemPrompt.value = value
     }
 
+    fun updateDailyRecordPrompt(value: String) {
+        _dailyRecordPrompt.value = value
+    }
+
     fun save(projectId: Long, onSaved: () -> Unit) {
         val finalName = _name.value.trim()
         val finalSystemPrompt = _systemPrompt.value.trim()
-        if (finalName.isEmpty() || finalSystemPrompt.isEmpty()) return
+        val finalDailyRecordPrompt = _dailyRecordPrompt.value.trim()
+        if (finalName.isEmpty() || finalSystemPrompt.isEmpty() || finalDailyRecordPrompt.isEmpty()) return
 
         viewModelScope.launch {
-            repository.saveProject(projectId, finalName, finalSystemPrompt)
+            repository.saveProject(projectId, finalName, finalSystemPrompt, finalDailyRecordPrompt)
             onSaved()
         }
     }

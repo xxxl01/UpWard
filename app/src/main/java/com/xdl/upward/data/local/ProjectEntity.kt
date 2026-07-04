@@ -11,6 +11,8 @@ data class ProjectEntity(
     val name: String,
     @ColumnInfo(name = "system_prompt")
     val systemPrompt: String,
+    @ColumnInfo(name = "daily_record_prompt")
+    val dailyRecordPrompt: String,
     @ColumnInfo(name = "created_at")
     val createdAt: String
 )

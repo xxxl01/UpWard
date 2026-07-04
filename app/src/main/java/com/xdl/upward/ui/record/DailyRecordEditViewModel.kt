@@ -51,4 +51,13 @@ class DailyRecordEditViewModel(application: Application) : AndroidViewModel(appl
             onSaved()
         }
     }
+
+    fun deleteRecord(recordId: Long, onDeleted: () -> Unit) {
+        if (recordId == 0L) return
+
+        viewModelScope.launch {
+            repository.deleteRecord(recordId)
+            onDeleted()
+        }
+    }
 }

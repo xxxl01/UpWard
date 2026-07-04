@@ -1,6 +1,8 @@
 package com.xdl.upward.data.repository
 
 import com.xdl.upward.data.local.ConfigDao
+import com.xdl.upward.data.local.ConfigEntity
+import kotlinx.coroutines.flow.Flow
 
 class ConfigRepository(
     private val configDao: ConfigDao
@@ -10,8 +12,20 @@ class ConfigRepository(
         return value?.toIntOrNull() ?: 20
     }
 
-    suspend fun getDailyRecordPrompt(): String {
-        return configDao.getValue("daily_record_prompt")
-            ?: "请根据今天的对话，总结用户在本项目中的进展、问题、情绪状态和下一步建议。"
+    fun observeViolationCount(): Flow<String?> {
+        return configDao.observeValue("violation_count")
+    }
+
+    suspend fun getValue(key: String): String? {
+        return configDao.getValue(key)
+    }
+
+    suspend fun setValue(key: String, value: String) {
+        val oldConfig = configDao.getByKey(key)
+        if (oldConfig == null) {
+            configDao.insert(ConfigEntity(key = key, value = value))
+        } else {
+            configDao.update(oldConfig.copy(value = value))
+        }
     }
 }

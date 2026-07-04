@@ -1,7 +1,5 @@
-package com.xdl.upward.ui.project
+package com.xdl.upward.ui.violation
 
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -11,7 +9,6 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -31,14 +28,14 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.MoreHoriz
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -56,7 +53,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalClipboardManager
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
@@ -70,12 +66,12 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
-import com.xdl.upward.data.local.MessageEntity
-import org.commonmark.ext.gfm.tables.TablesExtension
+import com.xdl.upward.domain.AiChatMessage
 import org.commonmark.ext.gfm.tables.TableBlock
 import org.commonmark.ext.gfm.tables.TableCell
 import org.commonmark.ext.gfm.tables.TableHead
 import org.commonmark.ext.gfm.tables.TableRow
+import org.commonmark.ext.gfm.tables.TablesExtension
 import org.commonmark.node.BlockQuote
 import org.commonmark.node.BulletList
 import org.commonmark.node.Code
@@ -94,44 +90,29 @@ import org.commonmark.node.StrongEmphasis
 import org.commonmark.node.Text as MarkdownText
 import org.commonmark.node.ThematicBreak
 import org.commonmark.parser.Parser
-import java.io.BufferedReader
-import java.io.InputStreamReader
 
 @Composable
-fun ProjectDetailScreen(
-    projectId: Long,
+fun ViolationChatScreen(
     onBack: () -> Unit,
-    onEditProject: () -> Unit,
-    onOpenDailyRecords: () -> Unit,
-    viewModel: ProjectDetailViewModel = viewModel()
+    viewModel: ViolationChatViewModel = viewModel()
 ) {
-    val projectFlow = remember(projectId) { viewModel.observeProject(projectId) }
-    val project by projectFlow.collectAsStateWithLifecycle(initialValue = null)
-    val messagesFlow = remember(projectId) { viewModel.observeMessages(projectId) }
-    val messages by messagesFlow.collectAsStateWithLifecycle(initialValue = emptyList())
+    val violationCount by viewModel.violationCount.collectAsStateWithLifecycle()
+    val messages by viewModel.messages.collectAsStateWithLifecycle()
     val input by viewModel.input.collectAsStateWithLifecycle()
     val loading by viewModel.loading.collectAsStateWithLifecycle()
-    val aiThinking by viewModel.aiThinking.collectAsStateWithLifecycle()
     val errorMessage by viewModel.errorMessage.collectAsStateWithLifecycle()
+    val projectLastMessageTimes by viewModel.projectLastMessageTimes.collectAsStateWithLifecycle()
     val listState = rememberLazyListState()
-    val context = LocalContext.current
-    val importLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        if (uri != null) {
-            val text = context.contentResolver.openInputStream(uri)?.use { inputStream ->
-                BufferedReader(InputStreamReader(inputStream)).use { reader ->
-                    reader.readText()
-                }
-            }.orEmpty()
-            viewModel.importMessages(projectId, text)
-        }
-    }
     val displayMessages = remember(messages) { messages.asReversed() }
+    var showProjectTimesDialog by remember { mutableStateOf(false) }
     val isNearBottom by remember {
         derivedStateOf { listState.firstVisibleItemIndex <= 1 }
     }
 
-    LaunchedEffect(projectId) {
-        listState.scrollToItem(0)
+    LaunchedEffect(violationCount) {
+        if (violationCount > 0) {
+            viewModel.sendInitialWarning()
+        }
     }
 
     LaunchedEffect(messages.size) {
@@ -145,13 +126,13 @@ fun ProjectDetailScreen(
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background)
     ) {
-        ProjectHeaderBar(
-            title = project?.name ?: "项目详情",
+        ViolationHeaderBar(
+            title = "违规告诫 $violationCount/3",
             onBack = onBack,
-            onEditProject = onEditProject,
-            onOpenDailyRecords = onOpenDailyRecords,
-            onGenerateTodayRecord = { viewModel.generateTodayRecord(projectId) },
-            onImportMessages = { importLauncher.launch(arrayOf("application/json", "text/*", "*/*")) }
+            onShowProjectTimes = {
+                viewModel.loadProjectLastMessageTimes()
+                showProjectTimesDialog = true
+            }
         )
 
         if (loading) {
@@ -176,7 +157,7 @@ fun ProjectDetailScreen(
                 )
                 Spacer(modifier = Modifier.width(10.dp))
                 Text(
-                    text = if (aiThinking) "AI 思考中..." else "AI 正在回复...",
+                    text = "AI 正在组织语言...",
                     color = MaterialTheme.colorScheme.onPrimaryContainer,
                     style = MaterialTheme.typography.bodyMedium,
                     fontWeight = FontWeight.Medium
@@ -200,7 +181,7 @@ fun ProjectDetailScreen(
                 contentAlignment = Alignment.Center
             ) {
                 Text(
-                    text = "还没有对话",
+                    text = if (violationCount > 0) "正在准备告诫..." else "当前没有违规记录",
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     style = MaterialTheme.typography.bodyMedium
                 )
@@ -210,46 +191,83 @@ fun ProjectDetailScreen(
                 state = listState,
                 reverseLayout = true,
                 verticalArrangement = Arrangement.spacedBy(10.dp),
-                contentPadding = PaddingValues(bottom = 4.dp),
                 modifier = Modifier
                     .weight(1f)
                     .fillMaxWidth()
                     .padding(horizontal = 16.dp, vertical = 10.dp)
             ) {
-                items(
-                    items = displayMessages,
-                    key = { it.id },
-                    contentType = { it.role }
-                ) { message ->
-                    MessageItem(
-                        message = message,
-                        onEdit = viewModel::updateMessage,
-                        onDelete = viewModel::deleteMessage
-                    )
+                items(displayMessages) { message ->
+                    ViolationMessageItem(message)
                 }
             }
         }
 
-        ProjectChatInputBar(
+        ViolationChatInputBar(
             input = input,
             loading = loading,
             onInputChange = viewModel::updateInput,
-            onSend = { viewModel.sendUserMessage(projectId) }
+            onSend = viewModel::sendUserMessage
+        )
+    }
+
+    if (showProjectTimesDialog) {
+        AlertDialog(
+            onDismissRequest = { showProjectTimesDialog = false },
+            title = { Text("各项目最近消息时间") },
+            text = {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 360.dp)
+                        .verticalScroll(rememberScrollState())
+                ) {
+                    if (projectLastMessageTimes.isEmpty()) {
+                        Text(
+                            text = "当前没有项目",
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+                    } else {
+                        projectLastMessageTimes.forEach { item ->
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 6.dp)
+                            ) {
+                                Text(
+                                    text = item.projectName,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    fontWeight = FontWeight.Medium,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                Spacer(modifier = Modifier.height(3.dp))
+                                Text(
+                                    text = item.lastMessageTime,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    style = MaterialTheme.typography.bodySmall
+                                )
+                            }
+                            HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.12f))
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showProjectTimesDialog = false }) {
+                    Text("关闭")
+                }
+            }
         )
     }
 }
 
 @Composable
-private fun ProjectHeaderBar(
+private fun ViolationHeaderBar(
     title: String,
     onBack: () -> Unit,
-    onEditProject: () -> Unit,
-    onOpenDailyRecords: () -> Unit,
-    onGenerateTodayRecord: () -> Unit,
-    onImportMessages: () -> Unit
+    onShowProjectTimes: () -> Unit
 ) {
-    var menuExpanded by remember { mutableStateOf(false) }
-
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -285,62 +303,23 @@ private fun ProjectHeaderBar(
                     .weight(1f)
                     .padding(horizontal = 8.dp)
             )
-            Box {
-                Box(
-                    modifier = Modifier
-                        .size(30.dp)
-                        .clip(CircleShape)
-                        .clickable { menuExpanded = true },
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        imageVector = Icons.Filled.MoreHoriz,
-                        contentDescription = "更多操作",
-                        tint = MaterialTheme.colorScheme.onSurface,
-                        modifier = Modifier.size(22.dp)
-                    )
-                }
-                DropdownMenu(
-                    expanded = menuExpanded,
-                    onDismissRequest = { menuExpanded = false }
-                ) {
-                    DropdownMenuItem(
-                        text = { Text("编辑项目") },
-                        onClick = {
-                            menuExpanded = false
-                            onEditProject()
-                        }
-                    )
-                    DropdownMenuItem(
-                        text = { Text("每日记录") },
-                        onClick = {
-                            menuExpanded = false
-                            onOpenDailyRecords()
-                        }
-                    )
-                    DropdownMenuItem(
-                        text = { Text("生成今日记录") },
-                        onClick = {
-                            menuExpanded = false
-                            onGenerateTodayRecord()
-                        }
-                    )
-                    DropdownMenuItem(
-                        text = { Text("导入消息记录") },
-                        onClick = {
-                            menuExpanded = false
-                            onImportMessages()
-                        }
-                    )
-                }
-            }
+            Text(
+                text = "最近消息",
+                color = MaterialTheme.colorScheme.primary,
+                style = MaterialTheme.typography.labelLarge,
+                fontWeight = FontWeight.Medium,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(6.dp))
+                    .clickable { onShowProjectTimes() }
+                    .padding(horizontal = 8.dp, vertical = 6.dp)
+            )
         }
         HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.18f))
     }
 }
 
 @Composable
-private fun ProjectChatInputBar(
+private fun ViolationChatInputBar(
     input: String,
     loading: Boolean,
     onInputChange: (String) -> Unit,
@@ -368,7 +347,7 @@ private fun ProjectChatInputBar(
         ) {
             if (input.isBlank()) {
                 Text(
-                    text = "输入今天的状态、计划或阻力",
+                    text = "回复或反思一下",
                     color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.65f),
                     fontSize = 15.sp
                 )
@@ -406,67 +385,10 @@ private fun ProjectChatInputBar(
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun MessageItem(
-    message: MessageEntity,
-    onEdit: (Long, String) -> Unit,
-    onDelete: (Long) -> Unit
-) {
+private fun ViolationMessageItem(message: AiChatMessage) {
     val isUser = message.role == "user"
     val clipboardManager = LocalClipboardManager.current
     var menuExpanded by remember { mutableStateOf(false) }
-    var editDialogVisible by remember { mutableStateOf(false) }
-    var editText by remember(message.id, message.content) { mutableStateOf(message.content) }
-
-    if (editDialogVisible) {
-        AlertDialog(
-            onDismissRequest = { editDialogVisible = false },
-            title = { Text("修改消息") },
-            text = {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .heightIn(min = 120.dp, max = 260.dp)
-                        .clip(RoundedCornerShape(8.dp))
-                        .background(MaterialTheme.colorScheme.background)
-                        .border(
-                            1.dp,
-                            MaterialTheme.colorScheme.outline.copy(alpha = 0.35f),
-                            RoundedCornerShape(8.dp)
-                        )
-                        .padding(10.dp)
-                ) {
-                    BasicTextField(
-                        value = editText,
-                        onValueChange = { editText = it },
-                        modifier = Modifier.fillMaxWidth(),
-                        textStyle = TextStyle(
-                            color = MaterialTheme.colorScheme.onSurface,
-                            fontSize = 15.sp,
-                            lineHeight = 20.sp
-                        ),
-                        cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
-                        minLines = 5,
-                        maxLines = 10
-                    )
-                }
-            },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        onEdit(message.id, editText)
-                        editDialogVisible = false
-                    }
-                ) {
-                    Text("保存")
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { editDialogVisible = false }) {
-                    Text("取消")
-                }
-            }
-        )
-    }
 
     Row(
         modifier = Modifier.fillMaxWidth(),
@@ -503,21 +425,6 @@ private fun MessageItem(
                     onClick = {
                         menuExpanded = false
                         clipboardManager.setText(AnnotatedString(message.content))
-                    }
-                )
-                DropdownMenuItem(
-                    text = { Text("修改") },
-                    onClick = {
-                        menuExpanded = false
-                        editText = message.content
-                        editDialogVisible = true
-                    }
-                )
-                DropdownMenuItem(
-                    text = { Text("删除") },
-                    onClick = {
-                        menuExpanded = false
-                        onDelete(message.id)
                     }
                 )
             }
@@ -745,6 +652,7 @@ private fun appendMarkdownInline(
         is Code -> builder.withStyle(SpanStyle(fontFamily = FontFamily.Monospace)) {
             append(node.literal)
         }
+
         is Emphasis -> builder.withStyle(SpanStyle(fontStyle = FontStyle.Italic)) {
             var child = node.firstChild
             while (child != null) {
@@ -752,6 +660,7 @@ private fun appendMarkdownInline(
                 child = child.next
             }
         }
+
         is StrongEmphasis -> builder.withStyle(SpanStyle(fontWeight = FontWeight.Bold)) {
             var child = node.firstChild
             while (child != null) {
@@ -759,6 +668,7 @@ private fun appendMarkdownInline(
                 child = child.next
             }
         }
+
         is Link -> builder.withStyle(
             SpanStyle(color = linkColor, textDecoration = TextDecoration.Underline)
         ) {
@@ -768,6 +678,7 @@ private fun appendMarkdownInline(
                 child = child.next
             }
         }
+
         is SoftLineBreak -> builder.append("\n")
         is HardLineBreak -> builder.append("\n")
         else -> {

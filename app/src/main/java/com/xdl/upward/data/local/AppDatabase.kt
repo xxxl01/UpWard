@@ -15,7 +15,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         AiApiEntity::class,
         ConfigEntity::class
     ],
-    version = 2,
+    version = 3,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -35,6 +35,16 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        private val MIGRATION_2_3 = object : Migration(2, 3) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    ALTER TABLE project ADD COLUMN daily_record_prompt TEXT NOT NULL DEFAULT '请根据今天的对话，总结用户在本项目中的进展、问题、情绪状态和下一步建议。'
+                    """.trimIndent()
+                )
+            }
+        }
+
         fun getInstance(context: Context): AppDatabase {
             return instance ?: synchronized(this) {
                 instance ?: Room.databaseBuilder(
@@ -42,17 +52,11 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     "upward.db"
                 )
-                    .addMigrations(MIGRATION_1_2)
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
                     .addCallback(object : Callback() {
                         override fun onOpen(db: SupportSQLiteDatabase) {
                             super.onOpen(db)
-                            db.execSQL(
-                                """
-                                INSERT INTO config (`key`, value)
-                                SELECT 'daily_record_prompt', '请根据今天的对话，总结用户在本项目中的进展、问题、情绪状态和下一步建议。'
-                                WHERE NOT EXISTS (SELECT 1 FROM config WHERE `key` = 'daily_record_prompt')
-                                """.trimIndent()
-                            )
+                            db.execSQL("DELETE FROM config WHERE `key` = 'daily_record_prompt'")
                             db.execSQL(
                                 """
                                 INSERT INTO config (`key`, value)

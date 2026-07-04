@@ -30,13 +30,23 @@ class AiMessageBuilder {
 
                 以下是这个项目从开始到现在的每日记录，按日期升序排列：
                 $dailyRecordText
-
-                请结合长期记录和最近对话，持续监督用户、鼓励用户，并给出具体、可执行的下一步建议。
                 """.trimIndent()
             )
         )
         recentMessages.forEach { message ->
-            if (message.role == "user" || message.role == "assistant") {
+            if (message.role == "user") {
+                val content = if (message.createdAt.isBlank()) {
+                    message.content
+                } else {
+                    "[消息发送时间: ${message.createdAt}]\n${message.content}"
+                }
+                messages.add(
+                    AiChatMessage(
+                        role = "user",
+                        content = content
+                    )
+                )
+            } else if (message.role == "assistant") {
                 messages.add(AiChatMessage(message.role, message.content))
             }
         }
