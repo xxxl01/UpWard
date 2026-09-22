@@ -13,7 +13,16 @@ class AiApiRepository(
 
     suspend fun getById(id: Long): AiApiEntity? = aiApiDao.getById(id)
 
-    suspend fun saveApi(id: Long, baseUrl: String, apiKey: String, model: String, temperature: Double, selected: Boolean) {
+    suspend fun saveApi(
+        id: Long,
+        baseUrl: String,
+        apiKey: String,
+        model: String,
+        temperature: Double,
+        supportImage: Boolean,
+        visionApiId: Long,
+        selected: Boolean
+    ) {
         if (id == 0L) {
             val newId = aiApiDao.insert(
                 AiApiEntity(
@@ -21,6 +30,8 @@ class AiApiRepository(
                     apiKey = apiKey,
                     model = model,
                     temperature = temperature,
+                    supportImage = supportImage,
+                    visionApiId = visionApiId,
                     selected = false
                 )
             )
@@ -36,6 +47,8 @@ class AiApiRepository(
                     apiKey = apiKey,
                     model = model,
                     temperature = temperature,
+                    supportImage = supportImage,
+                    visionApiId = visionApiId,
                     selected = if (selected) false else oldApi.selected
                 )
             )

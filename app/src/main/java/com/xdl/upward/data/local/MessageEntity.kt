@@ -13,5 +13,7 @@ data class MessageEntity(
     val role: String,
     val content: String,
     @ColumnInfo(name = "created_at")
-    val createdAt: String
+    val createdAt: String,
+    @ColumnInfo(name = "image_paths")
+    val imagePaths: String = ""
 )

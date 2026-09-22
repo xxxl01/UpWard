@@ -4,6 +4,7 @@ import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.xdl.upward.data.local.AppDatabase
+import com.xdl.upward.data.local.AiApiEntity
 import com.xdl.upward.data.repository.AiApiRepository
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -27,10 +28,28 @@ class ApiConfigEditViewModel(application: Application) : AndroidViewModel(applic
     private val _temperature = MutableStateFlow("0.7")
     val temperature: StateFlow<String> = _temperature.asStateFlow()
 
+    private val _supportImage = MutableStateFlow(false)
+    val supportImage: StateFlow<Boolean> = _supportImage.asStateFlow()
+
+    private val _visionApiId = MutableStateFlow(0L)
+    val visionApiId: StateFlow<Long> = _visionApiId.asStateFlow()
+
+    // 可选的视觉辅助模型列表：所有支持图片输入的其他 API
+    private val _visionApiOptions = MutableStateFlow<List<AiApiEntity>>(emptyList())
+    val visionApiOptions: StateFlow<List<AiApiEntity>> = _visionApiOptions.asStateFlow()
+
     private val _selected = MutableStateFlow(false)
     val selected: StateFlow<Boolean> = _selected.asStateFlow()
 
     private var loadedApiId = 0L
+
+    init {
+        viewModelScope.launch {
+            repository.observeAiApis().collect { apis ->
+                _visionApiOptions.value = apis.filter { it.id != loadedApiId && it.supportImage }
+            }
+        }
+    }
 
     fun loadApi(apiId: Long) {
         if (apiId == 0L || loadedApiId == apiId) return
@@ -41,6 +60,8 @@ class ApiConfigEditViewModel(application: Application) : AndroidViewModel(applic
             _apiKey.value = api.apiKey
             _model.value = api.model
             _temperature.value = api.temperature.toString()
+            _supportImage.value = api.supportImage
+            _visionApiId.value = api.visionApiId
             _selected.value = api.selected
         }
     }
@@ -65,6 +86,22 @@ class ApiConfigEditViewModel(application: Application) : AndroidViewModel(applic
         _selected.value = !_selected.value
     }
 
+    fun toggleSupportImage() {
+        _supportImage.value = !_supportImage.value
+    }
+
+    fun updateSupportImage(value: Boolean) {
+        _supportImage.value = value
+        if (value) {
+            // 自己已支持图片时，不再需要视觉辅助模型
+            _visionApiId.value = 0L
+        }
+    }
+
+    fun updateVisionApiId(value: Long) {
+        _visionApiId.value = value
+    }
+
     fun save(apiId: Long, onSaved: () -> Unit) {
         val finalBaseUrl = _baseUrl.value.trim()
         val finalApiKey = _apiKey.value.trim()
@@ -73,7 +110,7 @@ class ApiConfigEditViewModel(application: Application) : AndroidViewModel(applic
         if (finalBaseUrl.isEmpty() || finalModel.isEmpty()) return
 
         viewModelScope.launch {
-            repository.saveApi(apiId, finalBaseUrl, finalApiKey, finalModel, finalTemperature, _selected.value)
+            repository.saveApi(apiId, finalBaseUrl, finalApiKey, finalModel, finalTemperature, _supportImage.value, _visionApiId.value, _selected.value)
             onSaved()
         }
     }

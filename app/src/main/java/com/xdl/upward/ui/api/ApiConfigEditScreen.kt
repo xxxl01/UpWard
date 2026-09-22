@@ -19,14 +19,20 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -49,7 +55,11 @@ fun ApiConfigEditScreen(
     val apiKey by viewModel.apiKey.collectAsStateWithLifecycle()
     val model by viewModel.model.collectAsStateWithLifecycle()
     val temperature by viewModel.temperature.collectAsStateWithLifecycle()
+    val supportImage by viewModel.supportImage.collectAsStateWithLifecycle()
+    val visionApiId by viewModel.visionApiId.collectAsStateWithLifecycle()
+    val visionApiOptions by viewModel.visionApiOptions.collectAsStateWithLifecycle()
     val selected by viewModel.selected.collectAsStateWithLifecycle()
+    var visionMenuExpanded by remember { mutableStateOf(false) }
 
     LaunchedEffect(apiId) {
         viewModel.loadApi(apiId)
@@ -129,6 +139,12 @@ fun ApiConfigEditScreen(
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth()
             )
+            Text(
+                text = "填接口前缀即可，如 https://open.bigmodel.cn/api/paas/v4；也支持直接填完整地址（含 /chat/completions）。",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = 4.dp, start = 4.dp)
+            )
 
             Spacer(modifier = Modifier.height(12.dp))
             OutlinedTextField(
@@ -156,6 +172,132 @@ fun ApiConfigEditScreen(
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth()
             )
+
+            Spacer(modifier = Modifier.height(16.dp))
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(MaterialTheme.colorScheme.surface)
+                    .clickable { viewModel.toggleSupportImage() }
+                    .padding(horizontal = 14.dp, vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "支持图片输入",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                    Text(
+                        text = "只有确认当前模型支持多模态图片时再打开。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Switch(
+                    checked = supportImage,
+                    onCheckedChange = viewModel::updateSupportImage
+                )
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+            if (supportImage) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(MaterialTheme.colorScheme.surface)
+                        .padding(horizontal = 14.dp, vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        painter = painterResource(LucideR.drawable.lucide_ic_eye),
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f),
+                        modifier = Modifier.size(22.dp)
+                    )
+                    Spacer(modifier = Modifier.width(10.dp))
+                    Text(
+                        text = "已支持图片输入，无需配置视觉辅助模型。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            } else {
+                val selectedVisionApi = visionApiOptions.firstOrNull { it.id == visionApiId }
+                Box {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(MaterialTheme.colorScheme.surface)
+                            .clickable { visionMenuExpanded = true }
+                            .padding(horizontal = 14.dp, vertical = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            painter = painterResource(LucideR.drawable.lucide_ic_eye),
+                            contentDescription = null,
+                            tint = if (selectedVisionApi != null) MaterialTheme.colorScheme.primary
+                            else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f),
+                            modifier = Modifier.size(22.dp)
+                        )
+                        Spacer(modifier = Modifier.width(10.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "视觉辅助模型",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                            Text(
+                                text = when {
+                                    selectedVisionApi != null -> selectedVisionApi.model
+                                    visionApiOptions.isEmpty() -> "暂无可选的支持图片的 API"
+                                    else -> "不使用（发送图片时仅发送文字）"
+                                },
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                        Icon(
+                            painter = painterResource(LucideR.drawable.lucide_ic_chevron_down),
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
+                    DropdownMenu(
+                        expanded = visionMenuExpanded,
+                        onDismissRequest = { visionMenuExpanded = false }
+                    ) {
+                        DropdownMenuItem(
+                            text = { Text("不使用") },
+                            onClick = {
+                                visionMenuExpanded = false
+                                viewModel.updateVisionApiId(0L)
+                            }
+                        )
+                        visionApiOptions.forEach { option ->
+                            DropdownMenuItem(
+                                text = { Text("${option.model}（${option.baseUrl}）", maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                                onClick = {
+                                    visionMenuExpanded = false
+                                    viewModel.updateVisionApiId(option.id)
+                                }
+                            )
+                        }
+                    }
+                }
+                Text(
+                    text = "该 API 不支持图片输入时，会用选中的视觉模型先描述图片，再把描述文字发给主模型。注意：视觉辅助 API 的模型名必须填支持图片的视觉型号，如 glm-4.6v-flash、glm-5v-turbo；glm-4v-flash 不支持 Base64 图片，不能用于本 App。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 6.dp, start = 4.dp)
+                )
+            }
 
             Spacer(modifier = Modifier.height(16.dp))
             Row(

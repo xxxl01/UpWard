@@ -16,24 +16,30 @@ class ProjectRepository(
 
     suspend fun getProject(id: Long): ProjectEntity? = projectDao.getProject(id)
 
+    suspend fun setNextRequiredMessagePeriod(id: Long, startTime: String, endTime: String) {
+        projectDao.updateNextRequiredMessagePeriod(id, startTime, endTime)
+    }
+
     suspend fun saveProject(
         id: Long,
         name: String,
         systemPrompt: String,
-        dailyRecordPrompt: String
-    ) {
+        dailyRecordPrompt: String,
+        checkInMode: String
+    ): Long {
         val now = OffsetDateTime.now().toString()
-        if (id == 0L) {
+        return if (id == 0L) {
             projectDao.insert(
                 ProjectEntity(
                     name = name,
                     systemPrompt = systemPrompt,
                     dailyRecordPrompt = dailyRecordPrompt,
+                    checkInMode = checkInMode,
                     createdAt = now
                 )
             )
         } else {
-            val oldProject = projectDao.getProject(id) ?: return
+            val oldProject = projectDao.getProject(id) ?: return 0L
             projectDao.update(
                 oldProject.copy(
                     name = name,
@@ -41,6 +47,7 @@ class ProjectRepository(
                     dailyRecordPrompt = dailyRecordPrompt
                 )
             )
+            id
         }
     }
 }

@@ -1,14 +1,22 @@
 package com.xdl.upward.ui.project
 
+import android.content.ActivityNotFoundException
+import android.content.ComponentName
+import android.content.Intent
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -55,8 +63,13 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
@@ -70,9 +83,13 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.xdl.upward.data.local.MessageEntity
+import kotlinx.coroutines.delay
+import org.json.JSONArray
 import org.commonmark.ext.gfm.tables.TablesExtension
 import org.commonmark.ext.gfm.tables.TableBlock
 import org.commonmark.ext.gfm.tables.TableCell
@@ -97,7 +114,13 @@ import org.commonmark.node.Text as MarkdownText
 import org.commonmark.node.ThematicBreak
 import org.commonmark.parser.Parser
 import java.io.BufferedReader
+import java.io.File
 import java.io.InputStreamReader
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.widget.Toast
+import java.time.OffsetDateTime
+import java.time.format.DateTimeFormatter
 
 @Composable
 fun ProjectDetailScreen(
@@ -105,6 +128,8 @@ fun ProjectDetailScreen(
     onBack: () -> Unit,
     onEditProject: () -> Unit,
     onOpenDailyRecords: () -> Unit,
+    onOpenContextSummary: () -> Unit,
+    onOpenChallenge: () -> Unit,
     viewModel: ProjectDetailViewModel = viewModel()
 ) {
     val projectFlow = remember(projectId) { viewModel.observeProject(projectId) }
@@ -115,6 +140,7 @@ fun ProjectDetailScreen(
     val loading by viewModel.loading.collectAsStateWithLifecycle()
     val aiThinking by viewModel.aiThinking.collectAsStateWithLifecycle()
     val errorMessage by viewModel.errorMessage.collectAsStateWithLifecycle()
+    val selectedImagePaths by viewModel.selectedImagePaths.collectAsStateWithLifecycle()
     val listState = rememberLazyListState()
     val context = LocalContext.current
     val importLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
@@ -127,13 +153,40 @@ fun ProjectDetailScreen(
             viewModel.importMessages(projectId, text)
         }
     }
+    val imagePickerLauncher = rememberLauncherForActivityResult(ActivityResultContracts.PickMultipleVisualMedia()) { uris ->
+        viewModel.addSelectedImages(uris)
+    }
     val displayMessages = remember(messages) { messages.asReversed() }
+    var showNextRequiredDialog by remember { mutableStateOf(false) }
+    var nextRequiredStartDateInput by remember { mutableStateOf("") }
+    var nextRequiredStartHourInput by remember { mutableStateOf("") }
+    var nextRequiredStartMinuteInput by remember { mutableStateOf("") }
     val isNearBottom by remember {
         derivedStateOf { listState.firstVisibleItemIndex <= 1 }
     }
 
     LaunchedEffect(projectId) {
         listState.scrollToItem(0)
+        viewModel.setCurrentProject(projectId)
+        viewModel.checkRequiredMessageDeadline(projectId)
+    }
+
+    LaunchedEffect(project?.nextRequiredMessageEndAt) {
+        val endTimeText = project?.nextRequiredMessageEndAt.orEmpty()
+        if (endTimeText.isNotBlank()) {
+            val endTime = try {
+                OffsetDateTime.parse(endTimeText)
+            } catch (e: Exception) {
+                null
+            }
+            if (endTime != null) {
+                val waitMillis = endTime.toInstant().toEpochMilli() - System.currentTimeMillis() + 1000L
+                if (waitMillis > 0) {
+                    delay(waitMillis)
+                }
+                viewModel.checkRequiredMessageDeadline(projectId)
+            }
+        }
     }
 
     LaunchedEffect(messages.size) {
@@ -153,8 +206,35 @@ fun ProjectDetailScreen(
             onBack = onBack,
             onEditProject = onEditProject,
             onOpenDailyRecords = onOpenDailyRecords,
+            onOpenContextSummary = onOpenContextSummary,
+            onOpenChallenge = onOpenChallenge,
             onGenerateTodayRecord = { viewModel.generateTodayRecord(projectId) },
-            onImportMessages = { importLauncher.launch(arrayOf("application/json", "text/*", "*/*")) }
+            onImportMessages = { importLauncher.launch(arrayOf("application/json", "text/*", "*/*")) },
+            hasNextRequiredMessageTime = !project?.nextRequiredMessageEndAt.isNullOrBlank(),
+            onSetNextRequiredMessageTime = {
+                val oldStartTime = try {
+                    OffsetDateTime.parse(project?.nextRequiredMessageStartAt.orEmpty())
+                } catch (e: Exception) {
+                    null
+                }
+                val oldEndTime = try {
+                    OffsetDateTime.parse(project?.nextRequiredMessageEndAt.orEmpty())
+                } catch (e: Exception) {
+                    null
+                }
+                if (oldStartTime != null && oldEndTime != null) {
+                    nextRequiredStartDateInput = oldStartTime.toLocalDate().toString()
+                    nextRequiredStartHourInput = oldStartTime.hour.toString().padStart(2, '0')
+                    nextRequiredStartMinuteInput = oldStartTime.minute.toString().padStart(2, '0')
+                    showNextRequiredDialog = true
+                } else {
+                    val now = OffsetDateTime.now()
+                    nextRequiredStartDateInput = now.toLocalDate().toString()
+                    nextRequiredStartHourInput = now.hour.toString().padStart(2, '0')
+                    nextRequiredStartMinuteInput = "00"
+                    showNextRequiredDialog = true
+                }
+            }
         )
 
         if (loading) {
@@ -194,6 +274,54 @@ fun ProjectDetailScreen(
                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
             )
         }
+        if (!project?.nextRequiredMessageEndAt.isNullOrBlank()) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 4.dp)
+                    .clip(RoundedCornerShape(6.dp))
+                    .clickable {
+                        val startTimeText = project?.nextRequiredMessageStartAt.orEmpty()
+                        val startTime = try {
+                            OffsetDateTime.parse(startTimeText)
+                        } catch (e: Exception) {
+                            null
+                        }
+                        if (startTime == null) {
+                            Toast.makeText(context, "指定回复开始时间无效", Toast.LENGTH_SHORT).show()
+                            return@clickable
+                        }
+
+                        val reminderText = "UW:${project?.name.orEmpty()} DDL:${displayNextRequiredMessageTime(project?.nextRequiredMessageEndAt.orEmpty())}"
+                        val intent = Intent(Intent.ACTION_SEND).apply {
+                            component = ComponentName("com.bzzzapp", "com.bzzzapp.ux.BZDetailsActivity")
+                            type = "text/plain"
+                            putExtra(Intent.EXTRA_TEXT, reminderText)
+                        }
+                        try {
+                            context.startActivity(intent)
+                        } catch (e: ActivityNotFoundException) {
+                            Toast.makeText(context, "未安装 BZ Reminder", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                    .background(MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.55f))
+                    .padding(horizontal = 10.dp, vertical = 5.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "指定回复时间：${displayNextRequiredMessageTime(project?.nextRequiredMessageStartAt.orEmpty())} - ${displayNextRequiredMessageTime(project?.nextRequiredMessageEndAt.orEmpty())}",
+                        color = MaterialTheme.colorScheme.onSecondaryContainer,
+                        style = MaterialTheme.typography.labelMedium
+                    )
+                    Text(
+                        text = "点击在 Reminders 创建提醒",
+                        color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.72f),
+                        style = MaterialTheme.typography.labelSmall
+                    )
+                }
+            }
+        }
 
         if (displayMessages.isEmpty()) {
             Box(
@@ -226,8 +354,10 @@ fun ProjectDetailScreen(
                 ) { message ->
                     MessageItem(
                         message = message,
+                        canResend = message.id == messages.lastOrNull()?.id,
                         onEdit = viewModel::updateMessage,
-                        onDelete = viewModel::deleteMessage
+                        onDelete = viewModel::deleteMessage,
+                        onResend = { viewModel.resendLastMessage(projectId, message.id) }
                     )
                 }
             }
@@ -235,9 +365,57 @@ fun ProjectDetailScreen(
 
         ProjectChatInputBar(
             input = input,
+            selectedImagePaths = selectedImagePaths,
             loading = loading,
             onInputChange = viewModel::updateInput,
+            onPickImage = { imagePickerLauncher.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
+            onRemoveImage = viewModel::removeSelectedImage,
             onSend = { viewModel.sendUserMessage(projectId) }
+        )
+    }
+
+    if (showNextRequiredDialog) {
+        AlertDialog(
+            onDismissRequest = { showNextRequiredDialog = false },
+            title = { Text("指定回复时间") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        text = "在这个时间段内必须发送一条消息。结束时间固定为开始时间之后 25 分钟；已指定时只能提前开始时间。",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                    RequiredTimeRow(
+                        title = "开始",
+                        date = nextRequiredStartDateInput,
+                        onDateChange = { nextRequiredStartDateInput = it },
+                        hour = nextRequiredStartHourInput,
+                        onHourChange = { nextRequiredStartHourInput = it },
+                        minute = nextRequiredStartMinuteInput,
+                        onMinuteChange = { nextRequiredStartMinuteInput = it }
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        viewModel.setNextRequiredMessageTime(
+                            projectId,
+                            nextRequiredStartDateInput,
+                            nextRequiredStartHourInput,
+                            nextRequiredStartMinuteInput
+                        )
+                        showNextRequiredDialog = false
+                    }
+                ) {
+                    Text("确定")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showNextRequiredDialog = false }) {
+                    Text("取消")
+                }
+            }
         )
     }
 }
@@ -248,8 +426,12 @@ private fun ProjectHeaderBar(
     onBack: () -> Unit,
     onEditProject: () -> Unit,
     onOpenDailyRecords: () -> Unit,
+    onOpenContextSummary: () -> Unit,
+    onOpenChallenge: () -> Unit,
     onGenerateTodayRecord: () -> Unit,
-    onImportMessages: () -> Unit
+    onImportMessages: () -> Unit,
+    hasNextRequiredMessageTime: Boolean,
+    onSetNextRequiredMessageTime: () -> Unit
 ) {
     var menuExpanded by remember { mutableStateOf(false) }
 
@@ -322,10 +504,31 @@ private fun ProjectHeaderBar(
                         }
                     )
                     DropdownMenuItem(
+                        text = { Text("整理上下文") },
+                        onClick = {
+                            menuExpanded = false
+                            onOpenContextSummary()
+                        }
+                    )
+                    DropdownMenuItem(
+                        text = { Text("挑战") },
+                        onClick = {
+                            menuExpanded = false
+                            onOpenChallenge()
+                        }
+                    )
+                    DropdownMenuItem(
                         text = { Text("生成今日记录") },
                         onClick = {
                             menuExpanded = false
                             onGenerateTodayRecord()
+                        }
+                    )
+                    DropdownMenuItem(
+                        text = { Text(if (hasNextRequiredMessageTime) "提前指定回复时间" else "指定回复时间") },
+                        onClick = {
+                            menuExpanded = false
+                            onSetNextRequiredMessageTime()
                         }
                     )
                     DropdownMenuItem(
@@ -342,72 +545,396 @@ private fun ProjectHeaderBar(
     }
 }
 
+private fun displayNextRequiredMessageTime(time: String): String {
+    if (time.isBlank()) return ""
+    return try {
+        OffsetDateTime.parse(time).format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm"))
+    } catch (e: Exception) {
+        time
+    }
+}
+
+@Composable
+private fun RequiredTimeRow(
+    title: String,
+    date: String,
+    onDateChange: (String) -> Unit,
+    hour: String,
+    onHourChange: (String) -> Unit,
+    minute: String,
+    onMinuteChange: (String) -> Unit
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text(
+            text = title,
+            color = MaterialTheme.colorScheme.onSurface,
+            style = MaterialTheme.typography.labelMedium
+        )
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            RequiredTimePartInput(
+                value = date,
+                onValueChange = onDateChange,
+                placeholder = "yyyy-MM-dd",
+                modifier = Modifier.weight(2f)
+            )
+            RequiredTimePartInput(
+                value = hour,
+                onValueChange = onHourChange,
+                placeholder = "HH",
+                modifier = Modifier.weight(1f)
+            )
+            RequiredTimePartInput(
+                value = minute,
+                onValueChange = onMinuteChange,
+                placeholder = "MM",
+                modifier = Modifier.weight(1f)
+            )
+        }
+    }
+}
+
+@Composable
+private fun RequiredTimePartInput(
+    value: String,
+    onValueChange: (String) -> Unit,
+    placeholder: String,
+    modifier: Modifier = Modifier
+) {
+    Box(
+        modifier = modifier
+            .heightIn(min = 42.dp)
+            .clip(RoundedCornerShape(8.dp))
+            .background(MaterialTheme.colorScheme.background)
+            .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.35f), RoundedCornerShape(8.dp))
+            .padding(horizontal = 10.dp, vertical = 10.dp),
+        contentAlignment = Alignment.CenterStart
+    ) {
+        if (value.isBlank()) {
+            Text(
+                text = placeholder,
+                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.65f),
+                fontSize = 14.sp
+            )
+        }
+        BasicTextField(
+            value = value,
+            onValueChange = onValueChange,
+            modifier = Modifier.fillMaxWidth(),
+            textStyle = TextStyle(
+                color = MaterialTheme.colorScheme.onSurface,
+                fontSize = 14.sp,
+                lineHeight = 18.sp
+            ),
+            cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+            singleLine = true
+        )
+    }
+}
+
 @Composable
 private fun ProjectChatInputBar(
     input: String,
+    selectedImagePaths: List<String>,
     loading: Boolean,
     onInputChange: (String) -> Unit,
+    onPickImage: () -> Unit,
+    onRemoveImage: (String) -> Unit,
     onSend: () -> Unit
 ) {
-    Row(
+    Column(
         modifier = Modifier
             .fillMaxWidth()
             .background(MaterialTheme.colorScheme.surface)
             .navigationBarsPadding()
             .imePadding()
-            .padding(horizontal = 10.dp, vertical = 8.dp),
-        verticalAlignment = Alignment.Bottom,
-        horizontalArrangement = Arrangement.spacedBy(8.dp)
+            .padding(horizontal = 10.dp, vertical = 8.dp)
+    ) {
+        if (selectedImagePaths.isNotEmpty()) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState())
+                    .padding(bottom = 8.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                selectedImagePaths.forEach { path ->
+                    Box {
+                        ChatLocalImage(
+                            path = path,
+                            modifier = Modifier
+                                .size(74.dp)
+                                .clip(RoundedCornerShape(8.dp))
+                        )
+                        Box(
+                            modifier = Modifier
+                                .align(Alignment.TopEnd)
+                                .size(22.dp)
+                                .clip(CircleShape)
+                                .background(MaterialTheme.colorScheme.scrim.copy(alpha = 0.65f))
+                                .clickable { onRemoveImage(path) },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text("×", color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                }
+            }
+        }
+        Row(
+            verticalAlignment = Alignment.Bottom,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(38.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(MaterialTheme.colorScheme.secondaryContainer)
+                    .clickable(enabled = !loading) { onPickImage() },
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    painter = painterResource(LucideR.drawable.lucide_ic_image),
+                    contentDescription = "选择图片",
+                    tint = MaterialTheme.colorScheme.onSecondaryContainer,
+                    modifier = Modifier.size(18.dp)
+                )
+            }
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .heightIn(min = 38.dp, max = 112.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(MaterialTheme.colorScheme.background)
+                    .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.35f), RoundedCornerShape(8.dp))
+                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                contentAlignment = Alignment.CenterStart
+            ) {
+                if (input.isBlank()) {
+                    Text(
+                        text = "输入今天的状态、计划或阻力",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.65f),
+                        fontSize = 15.sp
+                    )
+                }
+                BasicTextField(
+                    value = input,
+                    onValueChange = onInputChange,
+                    modifier = Modifier.fillMaxWidth(),
+                    textStyle = TextStyle(
+                        color = MaterialTheme.colorScheme.onSurface,
+                        fontSize = 15.sp,
+                        lineHeight = 20.sp
+                    ),
+                    cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+                    minLines = 1,
+                    maxLines = 5
+                )
+            }
+            val canSend = !loading && (input.isNotBlank() || selectedImagePaths.isNotEmpty())
+            Box(
+                modifier = Modifier
+                    .size(38.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(
+                        if (canSend) MaterialTheme.colorScheme.primary
+                        else MaterialTheme.colorScheme.outline.copy(alpha = 0.35f)
+                    )
+                    .clickable(enabled = canSend) { onSend() },
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    painter = painterResource(LucideR.drawable.lucide_ic_send),
+                    contentDescription = "发送",
+                    tint = MaterialTheme.colorScheme.onPrimary,
+                    modifier = Modifier.size(18.dp)
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun ChatLocalImage(
+    path: String,
+    modifier: Modifier = Modifier,
+    targetMaxDimension: Int = 512,
+    contentScale: ContentScale = ContentScale.Fit
+) {
+    val bitmap = remember(path, targetMaxDimension) {
+        decodeSampledBitmap(path, targetMaxDimension)
+    }
+    if (bitmap != null) {
+        Image(
+            bitmap = bitmap.asImageBitmap(),
+            contentDescription = "聊天图片",
+            contentScale = contentScale,
+            modifier = modifier.background(MaterialTheme.colorScheme.surfaceVariant)
+        )
+    } else {
+        Box(
+            modifier = modifier.background(MaterialTheme.colorScheme.surfaceVariant),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(
+                text = "图片不存在",
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                style = MaterialTheme.typography.bodySmall
+            )
+        }
+    }
+}
+
+/**
+ * 按最长边不超过 maxDimension 的目标尺寸采样解码图片。
+ * 先读边界算出 2 的幂次采样比例，再真正解码，避免多张大图同时全量解码导致内存占用过高。
+ */
+private fun decodeSampledBitmap(path: String, maxDimension: Int): Bitmap? {
+    val file = File(path)
+    if (!file.exists()) return null
+    return try {
+        val boundsOptions = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeFile(path, boundsOptions)
+        var inSampleSize = 1
+        while (boundsOptions.outWidth / (inSampleSize * 2) >= maxDimension
+            || boundsOptions.outHeight / (inSampleSize * 2) >= maxDimension
+        ) {
+            inSampleSize *= 2
+        }
+        val decodeOptions = BitmapFactory.Options().apply { this.inSampleSize = inSampleSize }
+        BitmapFactory.decodeFile(path, decodeOptions)
+    } catch (e: Exception) {
+        null
+    }
+}
+
+/**
+ * 多图消息的缩略图网格。
+ * 2~3 张两列、4 张及以上三列，每格为正方形缩略图，右上角带 "n/总数" 序号角标。
+ */
+@Composable
+private fun ChatImageGrid(
+    imagePaths: List<String>,
+    onImageClick: (String) -> Unit
+) {
+    val columns = if (imagePaths.size <= 3) 2 else 3
+    var globalIndex = 0
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        imagePaths.chunked(columns).forEach { rowPaths ->
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                rowPaths.forEach { path ->
+                    globalIndex++
+                    Box(modifier = Modifier.weight(1f)) {
+                        ChatLocalImage(
+                            path = path,
+                            contentScale = ContentScale.Crop,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .aspectRatio(1f)
+                                .clip(RoundedCornerShape(6.dp))
+                                .clickable { onImageClick(path) }
+                        )
+                        Text(
+                            text = "$globalIndex/${imagePaths.size}",
+                            color = Color.White,
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Medium,
+                            modifier = Modifier
+                                .align(Alignment.TopEnd)
+                                .padding(3.dp)
+                                .clip(RoundedCornerShape(4.dp))
+                                .background(Color.Black.copy(alpha = 0.5f))
+                                .padding(horizontal = 4.dp, vertical = 1.dp)
+                        )
+                    }
+                }
+                // 最后一行不足列数时用占位补齐，保证各列对齐
+                repeat(columns - rowPaths.size) {
+                    Spacer(modifier = Modifier.weight(1f))
+                }
+            }
+        }
+    }
+}
+
+/**
+ * 全屏查看单张图片：黑色背景、双指缩放 + 拖动平移、单击或右上角按钮关闭。
+ */
+@Composable
+private fun FullScreenImagePreview(
+    path: String,
+    onDismiss: () -> Unit
+) {
+    val context = LocalContext.current
+    // 按屏幕最长边解码，保证放大后仍有足够清晰度
+    val targetMax = maxOf(
+        context.resources.displayMetrics.widthPixels,
+        context.resources.displayMetrics.heightPixels
+    )
+    val bitmap = remember(path, targetMax) { decodeSampledBitmap(path, targetMax) }
+    var scale by remember { mutableStateOf(1f) }
+    var offset by remember { mutableStateOf(Offset.Zero) }
+
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)
     ) {
         Box(
             modifier = Modifier
-                .weight(1f)
-                .heightIn(min = 38.dp, max = 112.dp)
-                .clip(RoundedCornerShape(8.dp))
-                .background(MaterialTheme.colorScheme.background)
-                .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.35f), RoundedCornerShape(8.dp))
-                .padding(horizontal = 12.dp, vertical = 8.dp),
-            contentAlignment = Alignment.CenterStart
+                .fillMaxSize()
+                .background(Color.Black)
         ) {
-            if (input.isBlank()) {
-                Text(
-                    text = "输入今天的状态、计划或阻力",
-                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.65f),
-                    fontSize = 15.sp
+            if (bitmap != null) {
+                Image(
+                    bitmap = bitmap.asImageBitmap(),
+                    contentDescription = "聊天图片大图",
+                    contentScale = ContentScale.Fit,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .graphicsLayer {
+                            scaleX = scale
+                            scaleY = scale
+                            translationX = offset.x
+                            translationY = offset.y
+                        }
+                        .pointerInput(Unit) {
+                            detectTapGestures(onTap = { onDismiss() })
+                        }
+                        .pointerInput(Unit) {
+                            detectTransformGestures { _, pan, zoom, _ ->
+                                scale = (scale * zoom).coerceIn(1f, 5f)
+                                // 未放大时不响应拖动，图片始终居中；放大后可自由拖动查看细节
+                                offset = if (scale > 1f) offset + pan else Offset.Zero
+                            }
+                        }
                 )
+            } else {
+                Box(
+                    modifier = Modifier.fillMaxSize(),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = "图片加载失败",
+                        color = Color.White,
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                }
             }
-            BasicTextField(
-                value = input,
-                onValueChange = onInputChange,
-                modifier = Modifier.fillMaxWidth(),
-                textStyle = TextStyle(
-                    color = MaterialTheme.colorScheme.onSurface,
-                    fontSize = 15.sp,
-                    lineHeight = 20.sp
-                ),
-                cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
-                minLines = 1,
-                maxLines = 5
-            )
-        }
-        val canSend = !loading && input.isNotBlank()
-        Box(
-            modifier = Modifier
-                .size(38.dp)
-                .clip(RoundedCornerShape(8.dp))
-                .background(
-                    if (canSend) MaterialTheme.colorScheme.primary
-                    else MaterialTheme.colorScheme.outline.copy(alpha = 0.35f)
-                )
-                .clickable(enabled = canSend) { onSend() },
-            contentAlignment = Alignment.Center
-        ) {
-            Icon(
-                painter = painterResource(LucideR.drawable.lucide_ic_send),
-                contentDescription = "发送",
-                tint = MaterialTheme.colorScheme.onPrimary,
-                modifier = Modifier.size(18.dp)
-            )
+            // 右上角关闭按钮
+            Box(
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(12.dp)
+                    .size(36.dp)
+                    .clip(CircleShape)
+                    .background(Color.White.copy(alpha = 0.2f))
+                    .clickable { onDismiss() },
+                contentAlignment = Alignment.Center
+            ) {
+                Text("×", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Bold)
+            }
         }
     }
 }
@@ -416,14 +943,34 @@ private fun ProjectChatInputBar(
 @Composable
 private fun MessageItem(
     message: MessageEntity,
+    canResend: Boolean,
     onEdit: (Long, String) -> Unit,
-    onDelete: (Long) -> Unit
+    onDelete: (Long) -> Unit,
+    onResend: () -> Unit
 ) {
     val isUser = message.role == "user"
     val clipboardManager = LocalClipboardManager.current
     var menuExpanded by remember { mutableStateOf(false) }
     var editDialogVisible by remember { mutableStateOf(false) }
+    var resendDialogVisible by remember { mutableStateOf(false) }
     var editText by remember(message.id, message.content) { mutableStateOf(message.content) }
+    var previewPath by remember { mutableStateOf<String?>(null) }
+    val imagePaths = remember(message.imagePaths) {
+        val paths = mutableListOf<String>()
+        try {
+            if (message.imagePaths.isNotBlank()) {
+                val array = JSONArray(message.imagePaths)
+                for (index in 0 until array.length()) {
+                    val path = array.optString(index).trim()
+                    if (path.isNotEmpty()) {
+                        paths.add(path)
+                    }
+                }
+            }
+        } catch (e: Exception) {
+        }
+        paths
+    }
 
     if (editDialogVisible) {
         AlertDialog(
@@ -476,6 +1023,29 @@ private fun MessageItem(
         )
     }
 
+    if (resendDialogVisible) {
+        AlertDialog(
+            onDismissRequest = { resendDialogVisible = false },
+            title = { Text("重新发送") },
+            text = { Text("确定要用当前最后一条消息重新请求 AI 吗？不会重复追加这条消息。") },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        resendDialogVisible = false
+                        onResend()
+                    }
+                ) {
+                    Text("重新发送")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { resendDialogVisible = false }) {
+                    Text("取消")
+                }
+            }
+        )
+    }
+
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = if (isUser) Arrangement.End else Arrangement.Start
@@ -495,12 +1065,33 @@ private fun MessageItem(
                     )
                     .padding(12.dp)
             ) {
-                MarkdownContent(
-                    markdown = message.content,
-                    color = if (isUser) MaterialTheme.colorScheme.onPrimaryContainer
-                    else MaterialTheme.colorScheme.onSurfaceVariant,
-                    linkColor = MaterialTheme.colorScheme.primary
-                )
+                if (imagePaths.size == 1) {
+                    // 单张图保持大图展示，点击可放大查看
+                    ChatLocalImage(
+                        path = imagePaths[0],
+                        targetMaxDimension = 720,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = 120.dp, max = 220.dp)
+                            .clip(RoundedCornerShape(8.dp))
+                            .clickable { previewPath = imagePaths[0] }
+                    )
+                } else if (imagePaths.size >= 2) {
+                    // 多张图用自适应网格展示，大幅压缩消息高度
+                    ChatImageGrid(
+                        imagePaths = imagePaths,
+                        onImageClick = { previewPath = it }
+                    )
+                }
+                if (message.content.isNotBlank()) {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    MarkdownContent(
+                        markdown = message.content,
+                        color = if (isUser) MaterialTheme.colorScheme.onPrimaryContainer
+                        else MaterialTheme.colorScheme.onSurfaceVariant,
+                        linkColor = MaterialTheme.colorScheme.primary
+                    )
+                }
             }
             DropdownMenu(
                 expanded = menuExpanded,
@@ -521,6 +1112,15 @@ private fun MessageItem(
                         editDialogVisible = true
                     }
                 )
+                if (canResend) {
+                    DropdownMenuItem(
+                        text = { Text("重新发送") },
+                        onClick = {
+                            menuExpanded = false
+                            resendDialogVisible = true
+                        }
+                    )
+                }
                 DropdownMenuItem(
                     text = { Text("删除") },
                     onClick = {
@@ -530,6 +1130,13 @@ private fun MessageItem(
                 )
             }
         }
+    }
+
+    previewPath?.let { path ->
+        FullScreenImagePreview(
+            path = path,
+            onDismiss = { previewPath = null }
+        )
     }
 }
 

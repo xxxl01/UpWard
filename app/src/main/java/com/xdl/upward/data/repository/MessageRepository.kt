@@ -3,6 +3,8 @@ package com.xdl.upward.data.repository
 import com.xdl.upward.data.local.MessageDao
 import com.xdl.upward.data.local.MessageEntity
 import kotlinx.coroutines.flow.Flow
+import org.json.JSONArray
+import java.io.File
 import java.time.LocalTime
 import java.time.OffsetDateTime
 
@@ -33,6 +35,14 @@ class MessageRepository(
         return messageDao.countMessagesBetween(projectId, startTime, endTime) > 0
     }
 
+    suspend fun hasUserMessagesBetween(projectId: Long, startTime: String, endTime: String): Boolean {
+        return messageDao.countUserMessagesBetween(projectId, startTime, endTime) > 0
+    }
+
+    suspend fun getMessagesBetween(projectId: Long, startTime: String, endTime: String): List<MessageEntity> {
+        return messageDao.getMessagesBetween(projectId, startTime, endTime)
+    }
+
     suspend fun getLastMessage(projectId: Long): MessageEntity? {
         return messageDao.getLastMessage(projectId)
     }
@@ -41,12 +51,17 @@ class MessageRepository(
         return messageDao.getLastUserMessage(projectId)
     }
 
-    suspend fun addUserMessage(projectId: Long, content: String) {
+    suspend fun addUserMessage(projectId: Long, content: String, imagePaths: List<String> = emptyList()) {
+        val imagePathArray = JSONArray()
+        imagePaths.forEach { path ->
+            imagePathArray.put(path)
+        }
         messageDao.insert(
             MessageEntity(
                 projectId = projectId,
                 role = "user",
                 content = content,
+                imagePaths = imagePathArray.toString(),
                 createdAt = OffsetDateTime.now().toString()
             )
         )
@@ -63,6 +78,20 @@ class MessageRepository(
         )
     }
 
+    suspend fun replaceMessagesWithSummary(projectId: Long, startTime: String, endTime: String, content: String, createdAt: String) {
+        messageDao.replaceBetween(
+            projectId,
+            startTime,
+            endTime,
+            MessageEntity(
+                projectId = projectId,
+                role = "assistant",
+                content = content,
+                createdAt = createdAt
+            )
+        )
+    }
+
     suspend fun importMessages(messages: List<MessageEntity>) {
         if (messages.isNotEmpty()) {
             messageDao.insertAll(messages)
@@ -74,6 +103,19 @@ class MessageRepository(
     }
 
     suspend fun deleteMessage(messageId: Long) {
+        val message = messageDao.getById(messageId)
         messageDao.deleteById(messageId)
+        if (message != null && message.imagePaths.isNotBlank()) {
+            try {
+                val imagePathArray = JSONArray(message.imagePaths)
+                for (index in 0 until imagePathArray.length()) {
+                    val path = imagePathArray.optString(index).trim()
+                    if (path.isNotEmpty()) {
+                        File(path).delete()
+                    }
+                }
+            } catch (e: Exception) {
+            }
+        }
     }
 }

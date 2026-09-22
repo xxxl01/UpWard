@@ -14,5 +14,9 @@ data class AiApiEntity(
     val apiKey: String,
     val model: String,
     val temperature: Double,
+    @ColumnInfo(name = "support_image")
+    val supportImage: Boolean = false,
+    @ColumnInfo(name = "vision_api_id")
+    val visionApiId: Long = 0,
     val selected: Boolean = false
 )

@@ -10,7 +10,9 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.xdl.upward.ui.api.ApiConfigEditScreen
+import com.xdl.upward.ui.challenge.ChallengeScreen
 import com.xdl.upward.ui.config.ConfigSettingsScreen
+import com.xdl.upward.ui.project.ContextSummaryScreen
 import com.xdl.upward.ui.project.ProjectDetailScreen
 import com.xdl.upward.ui.project.ProjectEditScreen
 import com.xdl.upward.ui.project.ProjectListScreen
@@ -78,7 +80,10 @@ fun AppNavGraph() {
             ProjectEditScreen(
                 projectId = projectId,
                 onBack = { navController.popBackStack() },
-                onSaved = { navController.popBackStack() }
+                onSaved = { navController.popBackStack() },
+                onDeleted = {
+                    navController.popBackStack(AppRoute.PROJECT_LIST, inclusive = false)
+                }
             )
         }
 
@@ -99,7 +104,43 @@ fun AppNavGraph() {
                 },
                 onOpenDailyRecords = {
                     navController.navigate(AppRoute.dailyRecordList(projectId))
+                },
+                onOpenContextSummary = {
+                    navController.navigate(AppRoute.contextSummary(projectId))
+                },
+                onOpenChallenge = {
+                    navController.navigate(AppRoute.challenge(projectId))
                 }
+            )
+        }
+
+        composable(
+            route = AppRoute.CHALLENGE,
+            arguments = listOf(
+                navArgument("projectId") {
+                    type = NavType.LongType
+                }
+            )
+        ) { backStackEntry ->
+            val projectId = backStackEntry.arguments?.getLong("projectId") ?: 0L
+            ChallengeScreen(
+                projectId = projectId,
+                onBack = { navController.popBackStack() }
+            )
+        }
+
+        composable(
+            route = AppRoute.CONTEXT_SUMMARY,
+            arguments = listOf(
+                navArgument("projectId") {
+                    type = NavType.LongType
+                }
+            )
+        ) { backStackEntry ->
+            val projectId = backStackEntry.arguments?.getLong("projectId") ?: 0L
+            ContextSummaryScreen(
+                projectId = projectId,
+                onBack = { navController.popBackStack() }
             )
         }
 

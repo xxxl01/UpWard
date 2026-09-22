@@ -1,6 +1,12 @@
 package com.xdl.upward.ui.violation
 
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -22,20 +28,19 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.windowInsetsPadding
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -53,6 +58,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.res.painterResource
 import com.composables.icons.lucide.R as LucideR
@@ -70,6 +77,7 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.xdl.upward.domain.AiChatMessage
+import java.io.File
 import org.commonmark.ext.gfm.tables.TableBlock
 import org.commonmark.ext.gfm.tables.TableCell
 import org.commonmark.ext.gfm.tables.TableHead
@@ -104,10 +112,12 @@ fun ViolationChatScreen(
     val input by viewModel.input.collectAsStateWithLifecycle()
     val loading by viewModel.loading.collectAsStateWithLifecycle()
     val errorMessage by viewModel.errorMessage.collectAsStateWithLifecycle()
-    val projectLastMessageTimes by viewModel.projectLastMessageTimes.collectAsStateWithLifecycle()
+    val selectedImagePaths by viewModel.selectedImagePaths.collectAsStateWithLifecycle()
     val listState = rememberLazyListState()
+    val imagePickerLauncher = rememberLauncherForActivityResult(ActivityResultContracts.PickMultipleVisualMedia()) { uris ->
+        viewModel.addSelectedImages(uris)
+    }
     val displayMessages = remember(messages) { messages.asReversed() }
-    var showProjectTimesDialog by remember { mutableStateOf(false) }
     val isNearBottom by remember {
         derivedStateOf { listState.firstVisibleItemIndex <= 1 }
     }
@@ -131,13 +141,11 @@ fun ViolationChatScreen(
             .windowInsetsPadding(WindowInsets.statusBars)
     ) {
         ViolationHeaderBar(
-            title = "违规告诫 $violationCount/3",
-            onBack = onBack,
-            onShowProjectTimes = {
-                viewModel.loadProjectLastMessageTimes()
-                showProjectTimesDialog = true
-            }
+            title = "违规告诫 $violationCount 次",
+            onBack = onBack
         )
+
+        ViolationWarningBanner(violationCount = violationCount)
 
         if (loading) {
             Row(
@@ -200,77 +208,33 @@ fun ViolationChatScreen(
                     .fillMaxWidth()
                     .padding(horizontal = 16.dp, vertical = 10.dp)
             ) {
-                items(displayMessages) { message ->
-                    ViolationMessageItem(message)
+                itemsIndexed(displayMessages) { index, message ->
+                    ViolationMessageItem(
+                        message = message,
+                        canResend = index == 0,
+                        onResend = viewModel::resendLastMessage
+                    )
                 }
             }
         }
 
         ViolationChatInputBar(
             input = input,
+            selectedImagePaths = selectedImagePaths,
             loading = loading,
             onInputChange = viewModel::updateInput,
+            onPickImage = { imagePickerLauncher.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
+            onRemoveImage = viewModel::removeSelectedImage,
             onSend = viewModel::sendUserMessage
         )
     }
 
-    if (showProjectTimesDialog) {
-        AlertDialog(
-            onDismissRequest = { showProjectTimesDialog = false },
-            title = { Text("各项目最近消息时间") },
-            text = {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .heightIn(max = 360.dp)
-                        .verticalScroll(rememberScrollState())
-                ) {
-                    if (projectLastMessageTimes.isEmpty()) {
-                        Text(
-                            text = "当前没有项目",
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            style = MaterialTheme.typography.bodyMedium
-                        )
-                    } else {
-                        projectLastMessageTimes.forEach { item ->
-                            Column(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(vertical = 6.dp)
-                            ) {
-                                Text(
-                                    text = item.projectName,
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    fontWeight = FontWeight.Medium,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                                Spacer(modifier = Modifier.height(3.dp))
-                                Text(
-                                    text = item.lastMessageTime,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    style = MaterialTheme.typography.bodySmall
-                                )
-                            }
-                            HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.12f))
-                        }
-                    }
-                }
-            },
-            confirmButton = {
-                TextButton(onClick = { showProjectTimesDialog = false }) {
-                    Text("关闭")
-                }
-            }
-        )
-    }
 }
 
 @Composable
 private fun ViolationHeaderBar(
     title: String,
-    onBack: () -> Unit,
-    onShowProjectTimes: () -> Unit
+    onBack: () -> Unit
 ) {
     Column(
         modifier = Modifier
@@ -307,20 +271,6 @@ private fun ViolationHeaderBar(
                     .weight(1f)
                     .padding(horizontal = 8.dp)
             )
-            Box(
-                modifier = Modifier
-                    .size(40.dp)
-                    .clip(CircleShape)
-                    .clickable { onShowProjectTimes() },
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    painter = painterResource(LucideR.drawable.lucide_ic_calendar),
-                    contentDescription = "最近消息",
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.size(22.dp)
-                )
-            }
         }
         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
     }
@@ -329,79 +279,256 @@ private fun ViolationHeaderBar(
 @Composable
 private fun ViolationChatInputBar(
     input: String,
+    selectedImagePaths: List<String>,
     loading: Boolean,
     onInputChange: (String) -> Unit,
+    onPickImage: () -> Unit,
+    onRemoveImage: (String) -> Unit,
     onSend: () -> Unit
 ) {
-    Row(
+    Column(
         modifier = Modifier
             .fillMaxWidth()
             .background(MaterialTheme.colorScheme.surface)
             .navigationBarsPadding()
             .imePadding()
-            .padding(horizontal = 10.dp, vertical = 8.dp),
-        verticalAlignment = Alignment.Bottom,
-        horizontalArrangement = Arrangement.spacedBy(8.dp)
+            .padding(horizontal = 10.dp, vertical = 8.dp)
     ) {
-        Box(
-            modifier = Modifier
-                .weight(1f)
-                .heightIn(min = 38.dp, max = 112.dp)
-                .clip(RoundedCornerShape(8.dp))
-                .background(MaterialTheme.colorScheme.background)
-                .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.35f), RoundedCornerShape(8.dp))
-                .padding(horizontal = 12.dp, vertical = 8.dp),
-            contentAlignment = Alignment.CenterStart
+        if (selectedImagePaths.isNotEmpty()) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState())
+                    .padding(bottom = 8.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                selectedImagePaths.forEach { path ->
+                    Box {
+                        ViolationLocalImage(
+                            path = path,
+                            modifier = Modifier.size(74.dp)
+                        )
+                        Box(
+                            modifier = Modifier
+                                .align(Alignment.TopEnd)
+                                .size(22.dp)
+                                .clip(CircleShape)
+                                .background(MaterialTheme.colorScheme.scrim.copy(alpha = 0.65f))
+                                .clickable { onRemoveImage(path) },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text("×", color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                }
+            }
+        }
+        Row(
+            verticalAlignment = Alignment.Bottom,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            if (input.isBlank()) {
-                Text(
-                    text = "回复或反思一下",
-                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.65f),
-                    fontSize = 15.sp
+            Box(
+                modifier = Modifier
+                    .size(38.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(MaterialTheme.colorScheme.secondaryContainer)
+                    .clickable(enabled = !loading) { onPickImage() },
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    painter = painterResource(LucideR.drawable.lucide_ic_image),
+                    contentDescription = "选择图片",
+                    tint = MaterialTheme.colorScheme.onSecondaryContainer,
+                    modifier = Modifier.size(18.dp)
                 )
             }
-            BasicTextField(
-                value = input,
-                onValueChange = onInputChange,
-                modifier = Modifier.fillMaxWidth(),
-                textStyle = TextStyle(
-                    color = MaterialTheme.colorScheme.onSurface,
-                    fontSize = 15.sp,
-                    lineHeight = 20.sp
-                ),
-                cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
-                minLines = 1,
-                maxLines = 5
-            )
-        }
-        val canSend = !loading && input.isNotBlank()
-        Box(
-            modifier = Modifier
-                .size(38.dp)
-                .clip(RoundedCornerShape(8.dp))
-                .background(
-                    if (canSend) MaterialTheme.colorScheme.primary
-                    else MaterialTheme.colorScheme.outline.copy(alpha = 0.35f)
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .heightIn(min = 38.dp, max = 112.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(MaterialTheme.colorScheme.background)
+                    .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.35f), RoundedCornerShape(8.dp))
+                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                contentAlignment = Alignment.CenterStart
+            ) {
+                if (input.isBlank()) {
+                    Text(
+                        text = "回复或反思一下",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.65f),
+                        fontSize = 15.sp
+                    )
+                }
+                BasicTextField(
+                    value = input,
+                    onValueChange = onInputChange,
+                    modifier = Modifier.fillMaxWidth(),
+                    textStyle = TextStyle(
+                        color = MaterialTheme.colorScheme.onSurface,
+                        fontSize = 15.sp,
+                        lineHeight = 20.sp
+                    ),
+                    cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+                    minLines = 1,
+                    maxLines = 5
                 )
-                .clickable(enabled = canSend) { onSend() },
+            }
+            val canSend = !loading && (input.isNotBlank() || selectedImagePaths.isNotEmpty())
+            Box(
+                modifier = Modifier
+                    .size(38.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(
+                        if (canSend) MaterialTheme.colorScheme.primary
+                        else MaterialTheme.colorScheme.outline.copy(alpha = 0.35f)
+                    )
+                    .clickable(enabled = canSend) { onSend() },
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    painter = painterResource(LucideR.drawable.lucide_ic_send),
+                    contentDescription = "发送",
+                    tint = MaterialTheme.colorScheme.onPrimary,
+                    modifier = Modifier.size(18.dp)
+                )
+            }
+        }
+    }
+}
+
+// 违规告诫页顶部的警告提示：说明惩罚规则与抵扣方式，达到惩罚线（10 次）时用红色强调。
+@Composable
+private fun ViolationWarningBanner(violationCount: Int) {
+    val punished = violationCount >= 10
+    val containerColor = if (punished) {
+        MaterialTheme.colorScheme.errorContainer
+    } else {
+        MaterialTheme.colorScheme.tertiaryContainer
+    }
+    val contentColor = if (punished) {
+        MaterialTheme.colorScheme.onErrorContainer
+    } else {
+        MaterialTheme.colorScheme.onTertiaryContainer
+    }
+    val title = if (punished) {
+        "你已累计违规 $violationCount 次，处于惩罚状态"
+    } else {
+        "已累计违规 $violationCount 次"
+    }
+    val body = if (punished) {
+        "所有项目已拦截消息发送。请捐款 5 元并把捐款截图发给 AI；每笔捐款只能抵扣 10 次违规，剩余违规继续保留。"
+    } else {
+        "累计违规达到 10 次将触发惩罚：拦截所有项目消息发送。捐款 5 元并经 AI 确认后可抵扣 10 次违规，剩余违规继续保留。"
+    }
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 10.dp)
+            .clip(RoundedCornerShape(8.dp))
+            .background(containerColor)
+            .padding(horizontal = 12.dp, vertical = 10.dp)
+    ) {
+        Text(
+            text = title,
+            color = contentColor,
+            style = MaterialTheme.typography.bodyMedium,
+            fontWeight = FontWeight.Bold
+        )
+        Spacer(modifier = Modifier.height(4.dp))
+        Text(
+            text = body,
+            color = contentColor.copy(alpha = 0.9f),
+            style = MaterialTheme.typography.bodySmall
+        )
+    }
+}
+
+// 本地图片缩略图：按目标尺寸采样解码，避免全量加载大图。
+@Composable
+private fun ViolationLocalImage(
+    path: String,
+    modifier: Modifier = Modifier,
+    targetMaxDimension: Int = 512,
+    contentScale: ContentScale = ContentScale.Fit
+) {
+    val bitmap = remember(path, targetMaxDimension) {
+        decodeSampledBitmap(path, targetMaxDimension)
+    }
+    if (bitmap != null) {
+        Image(
+            bitmap = bitmap.asImageBitmap(),
+            contentDescription = "聊天图片",
+            contentScale = contentScale,
+            modifier = modifier.background(MaterialTheme.colorScheme.surfaceVariant)
+        )
+    } else {
+        Box(
+            modifier = modifier.background(MaterialTheme.colorScheme.surfaceVariant),
             contentAlignment = Alignment.Center
         ) {
-            Icon(
-                painter = painterResource(LucideR.drawable.lucide_ic_send),
-                contentDescription = "发送",
-                tint = MaterialTheme.colorScheme.onPrimary,
-                modifier = Modifier.size(18.dp)
+            Text(
+                text = "图片不存在",
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                style = MaterialTheme.typography.bodySmall
             )
         }
     }
 }
 
+// 按最长边不超过 maxDimension 的目标尺寸采样解码图片。
+private fun decodeSampledBitmap(path: String, maxDimension: Int): Bitmap? {
+    val file = File(path)
+    if (!file.exists()) return null
+    return try {
+        val boundsOptions = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeFile(path, boundsOptions)
+        var inSampleSize = 1
+        while (boundsOptions.outWidth / (inSampleSize * 2) >= maxDimension
+            || boundsOptions.outHeight / (inSampleSize * 2) >= maxDimension
+        ) {
+            inSampleSize *= 2
+        }
+        val decodeOptions = BitmapFactory.Options().apply { this.inSampleSize = inSampleSize }
+        BitmapFactory.decodeFile(path, decodeOptions)
+    } catch (e: Exception) {
+        null
+    }
+}
+
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun ViolationMessageItem(message: AiChatMessage) {
+private fun ViolationMessageItem(
+    message: AiChatMessage,
+    canResend: Boolean,
+    onResend: () -> Unit
+) {
     val isUser = message.role == "user"
     val clipboardManager = LocalClipboardManager.current
     var menuExpanded by remember { mutableStateOf(false) }
+    var resendDialogVisible by remember { mutableStateOf(false) }
+
+    if (resendDialogVisible) {
+        AlertDialog(
+            onDismissRequest = { resendDialogVisible = false },
+            title = { Text("重新发送") },
+            text = { Text("确定要用当前最后一条消息重新请求 AI 吗？不会重复追加这条消息。") },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        resendDialogVisible = false
+                        onResend()
+                    }
+                ) {
+                    Text("重新发送")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { resendDialogVisible = false }) {
+                    Text("取消")
+                }
+            }
+        )
+    }
 
     Row(
         modifier = Modifier.fillMaxWidth(),
@@ -440,6 +567,15 @@ private fun ViolationMessageItem(message: AiChatMessage) {
                         clipboardManager.setText(AnnotatedString(message.content))
                     }
                 )
+                if (canResend) {
+                    DropdownMenuItem(
+                        text = { Text("重新发送") },
+                        onClick = {
+                            menuExpanded = false
+                            resendDialogVisible = true
+                        }
+                    )
+                }
             }
         }
     }

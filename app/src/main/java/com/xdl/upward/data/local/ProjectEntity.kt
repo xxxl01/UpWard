@@ -13,6 +13,14 @@ data class ProjectEntity(
     val systemPrompt: String,
     @ColumnInfo(name = "daily_record_prompt")
     val dailyRecordPrompt: String,
+    @ColumnInfo(name = "check_in_mode")
+    val checkInMode: String = "three_times",
     @ColumnInfo(name = "created_at")
-    val createdAt: String
+    val createdAt: String,
+    @ColumnInfo(name = "next_required_message_at")
+    val nextRequiredMessageAt: String = "",
+    @ColumnInfo(name = "next_required_message_start_at")
+    val nextRequiredMessageStartAt: String = "",
+    @ColumnInfo(name = "next_required_message_end_at")
+    val nextRequiredMessageEndAt: String = ""
 )

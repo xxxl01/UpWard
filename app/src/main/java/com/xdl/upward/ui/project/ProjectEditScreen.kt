@@ -16,15 +16,23 @@ import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -40,11 +48,17 @@ fun ProjectEditScreen(
     projectId: Long,
     onBack: () -> Unit,
     onSaved: () -> Unit,
+    onDeleted: () -> Unit,
     viewModel: ProjectEditViewModel = viewModel()
 ) {
     val name by viewModel.name.collectAsStateWithLifecycle()
     val systemPrompt by viewModel.systemPrompt.collectAsStateWithLifecycle()
     val dailyRecordPrompt by viewModel.dailyRecordPrompt.collectAsStateWithLifecycle()
+    val checkInMode by viewModel.checkInMode.collectAsStateWithLifecycle()
+    val deleting by viewModel.deleting.collectAsStateWithLifecycle()
+
+    var showDeleteConfirm by remember { mutableStateOf(false) }
+    var deleteConfirmText by remember { mutableStateOf("") }
 
     LaunchedEffect(projectId) {
         viewModel.loadProject(projectId)
@@ -78,6 +92,17 @@ fun ProjectEditScreen(
 
             Spacer(modifier = Modifier.height(12.dp))
 
+        if (projectId == 0L) {
+            ProjectCheckInModeBlock(
+                checkInMode = checkInMode,
+                onChange = viewModel::updateCheckInMode
+            )
+        } else {
+            ProjectCheckInModeReadonlyBlock(checkInMode = checkInMode)
+        }
+
+        Spacer(modifier = Modifier.height(12.dp))
+
             OutlinedTextField(
                 value = systemPrompt,
                 onValueChange = viewModel::updateSystemPrompt,
@@ -94,6 +119,185 @@ fun ProjectEditScreen(
                 label = { Text("每日记录生成提示词") },
                 minLines = 5,
                 modifier = Modifier.fillMaxWidth()
+            )
+
+            if (projectId != 0L) {
+                Spacer(modifier = Modifier.height(24.dp))
+                OutlinedButton(
+                    onClick = { showDeleteConfirm = true },
+                    enabled = !deleting,
+                    colors = ButtonDefaults.outlinedButtonColors(
+                        contentColor = MaterialTheme.colorScheme.error
+                    ),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(48.dp)
+                ) {
+                    Icon(
+                        painter = painterResource(LucideR.drawable.lucide_ic_trash_2),
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(modifier = Modifier.size(8.dp))
+                    Text("删除项目")
+                }
+            }
+        }
+    }
+
+    if (showDeleteConfirm) {
+        val confirmEnabled = deleteConfirmText.trim() == "我确认删除此项目" && !deleting
+        AlertDialog(
+            onDismissRequest = { if (!deleting) showDeleteConfirm = false },
+            title = { Text("删除项目") },
+            text = {
+                Column {
+                    Text("删除后该项目的全部对话、日报和挑战记录都会被永久删除，且无法恢复。")
+                    Spacer(modifier = Modifier.height(12.dp))
+                    OutlinedTextField(
+                        value = deleteConfirmText,
+                        onValueChange = { deleteConfirmText = it },
+                        label = { Text("请输入：我确认删除此项目") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    enabled = confirmEnabled,
+                    onClick = {
+                        showDeleteConfirm = false
+                        viewModel.deleteProject(onDeleted)
+                    }
+                ) {
+                    Text(
+                        text = "删除",
+                        color = if (confirmEnabled) {
+                            MaterialTheme.colorScheme.error
+                        } else {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        }
+                    )
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { if (!deleting) showDeleteConfirm = false }) {
+                    Text("取消")
+                }
+            }
+        )
+    }
+}
+
+@Composable
+private fun ProjectCheckInModeBlock(
+    checkInMode: String,
+    onChange: (String) -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .background(MaterialTheme.colorScheme.surface)
+            .padding(14.dp)
+    ) {
+        Text(
+            text = "打卡模式",
+            style = MaterialTheme.typography.titleSmall,
+            fontWeight = FontWeight.SemiBold,
+            color = MaterialTheme.colorScheme.onSurface
+        )
+        Spacer(modifier = Modifier.height(8.dp))
+        ProjectCheckInModeOption(
+            title = "每日一次打卡",
+            description = "每天至少发送一条消息即可，适合普通长期项目。",
+            selected = checkInMode == "once_per_day",
+            onClick = { onChange("once_per_day") }
+        )
+        Spacer(modifier = Modifier.height(8.dp))
+        ProjectCheckInModeOption(
+            title = "三时段打卡",
+            description = "4-13、13-19:30、19:30-次日4 三个时段都要打卡。",
+            selected = checkInMode == "three_times",
+            onClick = { onChange("three_times") }
+        )
+    }
+}
+
+@Composable
+private fun ProjectCheckInModeReadonlyBlock(
+    checkInMode: String
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .background(MaterialTheme.colorScheme.surface)
+            .padding(14.dp)
+    ) {
+        Text(
+            text = "打卡模式",
+            style = MaterialTheme.typography.titleSmall,
+            fontWeight = FontWeight.SemiBold,
+            color = MaterialTheme.colorScheme.onSurface
+        )
+        Spacer(modifier = Modifier.height(8.dp))
+        Text(
+            text = if (checkInMode == "once_per_day") "每日一次打卡" else "三时段打卡",
+            style = MaterialTheme.typography.bodyMedium,
+            fontWeight = FontWeight.Medium,
+            color = MaterialTheme.colorScheme.onSurface
+        )
+        Spacer(modifier = Modifier.height(4.dp))
+        Text(
+            text = "为防止中途降低约束，创建后不可修改。",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+    }
+}
+
+@Composable
+private fun ProjectCheckInModeOption(
+    title: String,
+    description: String,
+    selected: Boolean,
+    onClick: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(10.dp))
+            .background(
+                if (selected) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.65f)
+                else MaterialTheme.colorScheme.background
+            )
+            .clickable { onClick() }
+            .padding(horizontal = 12.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(
+            painter = painterResource(
+                if (selected) LucideR.drawable.lucide_ic_circle_check
+                else LucideR.drawable.lucide_ic_circle
+            ),
+            contentDescription = null,
+            tint = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.size(20.dp)
+        )
+        Spacer(modifier = Modifier.size(10.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.Medium,
+                color = MaterialTheme.colorScheme.onSurface
+            )
+            Text(
+                text = description,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
     }

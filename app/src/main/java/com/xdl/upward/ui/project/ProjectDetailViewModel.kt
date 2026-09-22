@@ -1,6 +1,9 @@
 package com.xdl.upward.ui.project
 
 import android.app.Application
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.xdl.upward.data.local.AppDatabase
@@ -8,40 +11,61 @@ import com.xdl.upward.data.local.MessageEntity
 import com.xdl.upward.data.local.ProjectEntity
 import com.xdl.upward.data.remote.AiApiService
 import com.xdl.upward.data.repository.AiApiRepository
+import com.xdl.upward.data.repository.ChallengeRepository
 import com.xdl.upward.data.repository.ConfigRepository
 import com.xdl.upward.data.repository.DailyRecordRepository
 import com.xdl.upward.data.repository.MessageRepository
 import com.xdl.upward.data.repository.ProjectRepository
 import com.xdl.upward.domain.AiMessageBuilder
+import com.xdl.upward.domain.ChatExecutor
+import com.xdl.upward.reminder.RequiredMessageReminderScheduler
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.File
+import java.io.FileOutputStream
+import java.time.LocalDate
+import java.time.OffsetDateTime
 
 class ProjectDetailViewModel(application: Application) : AndroidViewModel(application) {
+    private val database = AppDatabase.getInstance(application)
     private val repository = ProjectRepository(
-        AppDatabase.getInstance(application).projectDao()
+        database.projectDao()
     )
     private val dailyRecordRepository = DailyRecordRepository(
-        AppDatabase.getInstance(application).dailyRecordDao()
+        database.dailyRecordDao()
     )
     private val messageRepository = MessageRepository(
-        AppDatabase.getInstance(application).messageDao()
+        database.messageDao()
     )
     private val aiApiRepository = AiApiRepository(
-        AppDatabase.getInstance(application).aiApiDao()
+        database.aiApiDao()
     )
     private val configRepository = ConfigRepository(
-        AppDatabase.getInstance(application).configDao()
+        database.configDao()
+    )
+    private val challengeRepository = ChallengeRepository(
+        database.challengeDao(),
+        database.challengeCheckInDao()
     )
     private val aiApiService = AiApiService()
     private val aiMessageBuilder = AiMessageBuilder()
 
     private val _input = MutableStateFlow("")
     val input: StateFlow<String> = _input.asStateFlow()
+
+    private val _violationCount = MutableStateFlow(0)
+    val violationCount: StateFlow<Int> = _violationCount.asStateFlow()
+
+    private val _selectedImagePaths = MutableStateFlow<List<String>>(emptyList())
+    val selectedImagePaths: StateFlow<List<String>> = _selectedImagePaths.asStateFlow()
 
     private val _loading = MutableStateFlow(false)
     val loading: StateFlow<Boolean> = _loading.asStateFlow()
@@ -51,6 +75,32 @@ class ProjectDetailViewModel(application: Application) : AndroidViewModel(applic
 
     private val _errorMessage = MutableStateFlow("")
     val errorMessage: StateFlow<String> = _errorMessage.asStateFlow()
+
+    private var currentProjectId = 0L
+    private var chatStateJob: Job? = null
+
+    init {
+        viewModelScope.launch {
+            configRepository.observeViolationCount().collect { value ->
+                _violationCount.value = value?.toIntOrNull() ?: 0
+            }
+        }
+    }
+
+    // 绑定当前项目：把聊天执行状态（loading/思考中/错误）从后台执行器透传到本页面的状态流。
+    // 聊天请求由 ChatExecutor 在进程级作用域里执行，退出页面后仍在跑，回到页面时从这里恢复显示。
+    fun setCurrentProject(projectId: Long) {
+        if (currentProjectId == projectId) return
+        currentProjectId = projectId
+        chatStateJob?.cancel()
+        chatStateJob = viewModelScope.launch {
+            ChatExecutor.observeProjectChat(projectId).collect { state ->
+                _loading.value = state.loading
+                _aiThinking.value = state.aiThinking
+                _errorMessage.value = state.errorMessage
+            }
+        }
+    }
 
     fun observeProject(projectId: Long): Flow<ProjectEntity?> = repository.observeProject(projectId)
 
@@ -62,73 +112,188 @@ class ProjectDetailViewModel(application: Application) : AndroidViewModel(applic
         _input.value = value
     }
 
-    fun sendUserMessage(projectId: Long) {
-        val content = _input.value.trim()
-        if (content.isEmpty() || _loading.value) return
+    // 一次可选多张图片，按选择顺序压缩保存后追加到待发送列表；单张失败只跳过该张，不影响其余图片。
+    fun addSelectedImages(uris: List<Uri>) {
+        if (uris.isEmpty()) return
 
-        _input.value = ""
         _errorMessage.value = ""
         viewModelScope.launch {
-            try {
-                _loading.value = true
-                _aiThinking.value = false
-                messageRepository.addUserMessage(projectId, content)
-
-                val project = repository.getProject(projectId)
-                if (project == null) {
-                    _errorMessage.value = "项目不存在"
-                    return@launch
+            val savedPaths = mutableListOf<String>()
+            var failedCount = 0
+            withContext(Dispatchers.IO) {
+                val context = getApplication<Application>()
+                val imageDir = File(context.filesDir, "chat_images")
+                if (!imageDir.exists()) {
+                    imageDir.mkdirs()
                 }
+                uris.forEachIndexed { index, uri ->
+                    try {
+                        val bitmap = context.contentResolver.openInputStream(uri)?.use { inputStream ->
+                            BitmapFactory.decodeStream(inputStream)
+                        } ?: throw IllegalStateException("图片读取失败")
 
-                val api = aiApiRepository.getSelected()
-                if (api == null) {
-                    _errorMessage.value = "请先在 API 设置中选择一个 API"
-                    return@launch
-                }
-
-                val count = configRepository.getMessageContextCount()
-                val dailyRecords = dailyRecordRepository.getAllByProjectId(projectId)
-                val recentMessages = messageRepository.getRecentMessages(projectId, count)
-                val requestMessages = aiMessageBuilder.buildChatMessages(project, dailyRecords, recentMessages)
-
-                var assistantMessageId = 0L
-                val reply = StringBuilder()
-                var lastUpdateAt = 0L
-                val finalReply = aiApiService.streamChat(
-                    api = api,
-                    messages = requestMessages,
-                    onContentDelta = { delta ->
-                        _aiThinking.value = false
-                        reply.append(delta)
-                        if (assistantMessageId == 0L) {
-                            assistantMessageId = messageRepository.addAssistantMessage(projectId, reply.toString())
-                            lastUpdateAt = System.currentTimeMillis()
+                        val maxSide = 1600
+                        val width = bitmap.width
+                        val height = bitmap.height
+                        val outputBitmap = if (width > maxSide || height > maxSide) {
+                            val scale = maxSide.toFloat() / maxOf(width, height).toFloat()
+                            Bitmap.createScaledBitmap(bitmap, (width * scale).toInt(), (height * scale).toInt(), true)
                         } else {
-                            val now = System.currentTimeMillis()
-                            if (now - lastUpdateAt >= 250L) {
-                                messageRepository.updateMessageContent(assistantMessageId, reply.toString())
-                                lastUpdateAt = now
-                            }
+                            bitmap
                         }
-                    },
-                    onReasoningDelta = {
-                        if (reply.isEmpty()) {
-                            _aiThinking.value = true
+
+                        // 多张图片可能在同一毫秒保存，文件名带上序号避免互相覆盖
+                        val imageFile = File(imageDir, "chat_${System.currentTimeMillis()}_$index.webp")
+                        FileOutputStream(imageFile).use { outputStream ->
+                            outputBitmap.compress(Bitmap.CompressFormat.WEBP_LOSSY, 80, outputStream)
                         }
+                        if (outputBitmap !== bitmap) {
+                            outputBitmap.recycle()
+                        }
+                        bitmap.recycle()
+                        savedPaths.add(imageFile.absolutePath)
+                    } catch (e: Exception) {
+                        failedCount++
                     }
-                )
-                if (assistantMessageId != 0L) {
-                    messageRepository.updateMessageContent(assistantMessageId, finalReply)
-                } else if (finalReply.isNotEmpty()) {
-                    messageRepository.addAssistantMessage(projectId, finalReply)
                 }
-            } catch (e: Exception) {
-                _errorMessage.value = e.message ?: "AI 请求失败"
-            } finally {
-                _loading.value = false
-                _aiThinking.value = false
+            }
+            if (savedPaths.isNotEmpty()) {
+                _selectedImagePaths.value = _selectedImagePaths.value + savedPaths
+            }
+            if (failedCount > 0) {
+                _errorMessage.value = "有 $failedCount 张图片保存失败，已跳过。"
             }
         }
+    }
+
+    fun removeSelectedImage(path: String) {
+        _selectedImagePaths.value = _selectedImagePaths.value.filter { it != path }
+        viewModelScope.launch(Dispatchers.IO) {
+            File(path).delete()
+        }
+    }
+
+    fun checkRequiredMessageDeadline(projectId: Long) {
+        viewModelScope.launch {
+            // 挑战缺卡检测：挑战期内有日期没打卡则进入失败惩罚流程。
+            challengeRepository.checkForMissedDays(projectId)
+
+            val project = repository.getProject(projectId) ?: return@launch
+            if (project.nextRequiredMessageEndAt.isBlank()) return@launch
+
+            val endTime = try {
+                OffsetDateTime.parse(project.nextRequiredMessageEndAt)
+            } catch (e: Exception) {
+                repository.setNextRequiredMessagePeriod(projectId, "", "")
+                RequiredMessageReminderScheduler.cancel(getApplication(), projectId)
+                return@launch
+            }
+            if (OffsetDateTime.now().isBefore(endTime.plusMinutes(1))) return@launch
+
+            // 处罚后立即以当前时间开始新的 25 分钟窗口，不能让窗口直接消失。
+            val nextStartTime = OffsetDateTime.now()
+            val nextEndTime = nextStartTime.plusMinutes(25)
+            repository.setNextRequiredMessagePeriod(projectId, nextStartTime.toString(), nextEndTime.toString())
+            RequiredMessageReminderScheduler.schedule(getApplication(), projectId, nextStartTime.toString(), nextEndTime.toString())
+            // 违规次数持续累加；达到 10 次后进入惩罚状态，每笔捐款由告诫页 AI 确认后抵扣 10 次
+            val currentCount = configRepository.getValue("violation_count")?.toIntOrNull() ?: 0
+            val finalCount = currentCount + 1
+            configRepository.setValue("violation_count", finalCount.toString())
+            _violationCount.value = finalCount
+            _errorMessage.value = if (finalCount >= 10) {
+                "已错过指定回复时间，违规累计已达到惩罚线：需捐款 5 元并把截图发给违规告诫页的 AI，每笔捐款只能抵扣 10 次违规。"
+            } else {
+                "已错过指定回复时间，已记为违规 $finalCount/10。"
+            }
+        }
+    }
+
+    fun setNextRequiredMessageTime(
+        projectId: Long,
+        startDateText: String,
+        startHourText: String,
+        startMinuteText: String
+    ) {
+        val startDate = try {
+            LocalDate.parse(startDateText.trim())
+        } catch (e: Exception) {
+            _errorMessage.value = "开始日期格式不正确，请按 yyyy-MM-dd 输入"
+            return
+        }
+        val startHour = startHourText.trim().toIntOrNull()
+        if (startHour == null || startHour !in 0..23) {
+            _errorMessage.value = "开始小时必须是 0-23"
+            return
+        }
+        val startMinute = startMinuteText.trim().toIntOrNull()
+        if (startMinute == null || startMinute !in 0..59) {
+            _errorMessage.value = "开始分钟必须是 0-59"
+            return
+        }
+
+        val startTime = startDate.atTime(startHour, startMinute).atOffset(OffsetDateTime.now().offset)
+        val endTime = startTime.plusMinutes(25)
+        if (startTime.isBefore(OffsetDateTime.now())) {
+            _errorMessage.value = "开始时间不能早于当前时间"
+            return
+        }
+
+        _errorMessage.value = ""
+        viewModelScope.launch {
+            val project = repository.getProject(projectId) ?: return@launch
+            if (project.nextRequiredMessageEndAt.isNotBlank()) {
+                val oldStartTime = try {
+                    OffsetDateTime.parse(project.nextRequiredMessageStartAt)
+                } catch (e: Exception) {
+                    null
+                }
+                if (oldStartTime == null) {
+                    repository.setNextRequiredMessagePeriod(projectId, startTime.toString(), endTime.toString())
+                    RequiredMessageReminderScheduler.schedule(getApplication(), projectId, startTime.toString(), endTime.toString())
+                    return@launch
+                }
+                if (!startTime.isBefore(oldStartTime)) {
+                    _errorMessage.value = "新的开始时间必须早于原开始时间"
+                    return@launch
+                }
+            }
+            repository.setNextRequiredMessagePeriod(projectId, startTime.toString(), endTime.toString())
+            RequiredMessageReminderScheduler.schedule(getApplication(), projectId, startTime.toString(), endTime.toString())
+        }
+    }
+
+    // 发送消息的完整请求流程（含流式写库、工具调用）由 ChatExecutor 在后台执行，
+    // 这里只做输入校验和触发，退出页面后请求继续，回到页面时状态从执行器恢复。
+    fun sendUserMessage(projectId: Long) {
+        val content = _input.value.trim()
+        val imagePaths = _selectedImagePaths.value
+        if ((content.isEmpty() && imagePaths.isEmpty()) || _loading.value) return
+
+        // 违规累计 10 次进入惩罚状态：未完成捐款重置前，拦截所有项目的消息发送
+        if (_violationCount.value >= 10) {
+            _input.value = ""
+            _selectedImagePaths.value = emptyList()
+            _errorMessage.value = "你已累计违规 ${_violationCount.value} 次，处于惩罚状态，消息发送已被拦截。请到项目列表页的“违规告诫”入口捐款 5 元，把捐款截图发给 AI；每笔捐款只能抵扣 10 次违规。"
+            return
+        }
+
+        _input.value = ""
+        _selectedImagePaths.value = emptyList()
+        _errorMessage.value = ""
+        ChatExecutor.sendUserMessage(getApplication(), projectId, content, imagePaths)
+    }
+
+    fun resendLastMessage(projectId: Long, messageId: Long) {
+        if (_loading.value) return
+
+        // 惩罚状态同样拦截重发
+        if (_violationCount.value >= 10) {
+            _errorMessage.value = "你已累计违规 ${_violationCount.value} 次，处于惩罚状态，消息发送已被拦截。请到“违规告诫”页捐款 5 元并截图给 AI；每笔捐款只能抵扣 10 次违规。"
+            return
+        }
+
+        _errorMessage.value = ""
+        ChatExecutor.resendLastMessage(getApplication(), projectId, messageId)
     }
 
     fun generateTodayRecord(projectId: Long) {
