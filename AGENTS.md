@@ -23,7 +23,7 @@ Android 原生单模块应用（`:app`，包名 `com.xdl.upward`）：按项目�
 ## 聊天与 AI
 
 - `domain/ChatExecutor.kt` 是进程级单例：聊天请求生命周期脱离页面，退出聊天页/App 退后台仍会继续流式请求并写库；ViewModel 通过 `observeProjectChat(projectId)` 观察执行状态。改聊天逻辑先看这里。
-- AI 回复中嵌的 `<tool_call>{"name":"set_next_resume_time","arguments":{...}}</tool_call>` 是本地工具协议，由 ChatExecutor 解析执行（强制指定下次汇报时间）。违规累计 10 次**不再清空数据**，而是进入惩罚状态：拦截所有项目消息发送（ProjectDetailViewModel 入口拦截），用户需在任意慈善平台捐款 6 元以上并把捐款截图发给违规告诫页 AI，AI 确认后通过 `<tool_call>{"name":"reset_violation_count","arguments":{"summary":"审核依据"}}</tool_call>`（由 ViolationChatViewModel 解析执行）重置违规次数为 0 解除惩罚；惩罚状态不受月度清零影响。修改时保持该协议格式与校验规则。
+- AI 回复中嵌的 `<tool_call>{"name":"set_next_resume_time","arguments":{...}}</tool_call>` 是本地工具协议，由 ChatExecutor 解析执行（强制指定下次汇报时间）。违规累计 10 次**不再清空数据**，而是进入惩罚状态：拦截所有项目消息发送（ProjectDetailViewModel 入口拦截），违规次数达到 10 次后仍继续累加；用户需在任意慈善平台捐款 4 元以上并把捐款截图发给违规告诫页 AI，AI 确认后通过 `<tool_call>{"name":"reset_violation_count","arguments":{"summary":"审核依据"}}</tool_call>`（由 ViolationChatViewModel 解析执行）每笔捐款抵扣 10 次违规（降到 10 次以下才解除惩罚），同时自动把所有“失败惩罚中（failed）”的挑战结算为 settled，不再重复惩罚（`ChallengeRepository.settleAllFailed()`）；惩罚状态不受月度清零影响。金额门槛只写在提示词里，由 AI 看截图判断，代码不校验。修改时保持该协议格式与校验规则。
 - 全局提醒时间存在 config 表：`global_reminder_morning_time` / `afternoon` / `evening`（默认 07:00 / 13:00 / 19:30）；`reminder/GlobalReminderScheduler.kt` 用 `setExactAndAllowWhileIdle` 排程，Android 13+ 需要用户授予精确闹钟权限。`MainActivity.onCreate` 会初始化 config 并 reschedule。
 - Manifest 已开 `usesCleartextTraffic="true"`，允许 http 明文 AI 接口（局域网/127.0.0.1 地址）。
 

@@ -21,6 +21,9 @@ interface ChallengeDao {
     @Query("SELECT * FROM challenge ORDER BY id ASC")
     suspend fun getAllForBackup(): List<ChallengeEntity>
 
+    @Query("SELECT * FROM challenge WHERE status = 'failed'")
+    suspend fun getFailed(): List<ChallengeEntity>
+
     @Insert
     suspend fun insert(challenge: ChallengeEntity): Long
 
