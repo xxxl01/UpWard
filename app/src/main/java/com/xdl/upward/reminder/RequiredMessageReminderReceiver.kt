@@ -44,13 +44,13 @@ class RequiredMessageReminderReceiver : BroadcastReceiver() {
         val startTime = try {
             OffsetDateTime.parse(project.nextRequiredMessageStartAt)
         } catch (e: Exception) {
-            RequiredMessageReminderScheduler.cancel(context, projectId)
+            RequiredMessageDeadlineHandler.checkAndRecord(context, projectId)
             return
         }
         val endTime = try {
             OffsetDateTime.parse(project.nextRequiredMessageEndAt)
         } catch (e: Exception) {
-            RequiredMessageReminderScheduler.cancel(context, projectId)
+            RequiredMessageDeadlineHandler.checkAndRecord(context, projectId)
             return
         }
         val now = OffsetDateTime.now()
@@ -58,18 +58,14 @@ class RequiredMessageReminderReceiver : BroadcastReceiver() {
             RequiredMessageReminderScheduler.schedule(context, project)
             return
         }
-        if (!now.isBefore(endTime.plusMinutes(1))) {
-            RequiredMessageReminderScheduler.cancel(context, projectId)
+        if (!now.isBefore(endTime)) {
+            RequiredMessageDeadlineHandler.checkAndRecord(context, projectId)
             return
         }
 
         showNotification(context, project.id, project.name, startTime, endTime)
-        val nextTime = now.plusMinutes(10)
-        if (nextTime.isBefore(endTime)) {
-            RequiredMessageReminderScheduler.scheduleNext(context, project.id, nextTime.toInstant().toEpochMilli())
-        } else {
-            RequiredMessageReminderScheduler.cancel(context, project.id)
-        }
+        val nextTime = minOf(now.plusMinutes(10), endTime)
+        RequiredMessageReminderScheduler.scheduleNext(context, project.id, nextTime.toInstant().toEpochMilli())
     }
 
     private fun showNotification(

@@ -11,7 +11,13 @@ import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.xdl.upward.ui.api.ApiConfigEditScreen
 import com.xdl.upward.ui.challenge.ChallengeScreen
+import com.xdl.upward.ui.config.ApiSettingsScreen
+import com.xdl.upward.ui.config.BackupSettingsScreen
 import com.xdl.upward.ui.config.ConfigSettingsScreen
+import com.xdl.upward.ui.config.GeneralSettingsScreen
+import com.xdl.upward.ui.config.HolidaySettingsScreen
+import com.xdl.upward.ui.config.PermissionSettingsScreen
+import com.xdl.upward.ui.config.ReminderSettingsScreen
 import com.xdl.upward.ui.project.ContextSummaryScreen
 import com.xdl.upward.ui.project.ProjectDetailScreen
 import com.xdl.upward.ui.project.ProjectEditScreen
@@ -57,13 +63,52 @@ fun AppNavGraph() {
         composable(AppRoute.CONFIG_SETTINGS) {
             ConfigSettingsScreen(
                 onBack = { navController.popBackStack() },
-                onSaved = { navController.popBackStack() },
-                onCreateApi = {
-                    navController.navigate(AppRoute.apiConfigEdit())
-                },
-                onEditApi = { apiId ->
-                    navController.navigate(AppRoute.apiConfigEdit(apiId))
-                }
+                onOpenGeneral = { navController.navigate(AppRoute.GENERAL_SETTINGS) },
+                onOpenReminder = { navController.navigate(AppRoute.REMINDER_SETTINGS) },
+                onOpenHoliday = { navController.navigate(AppRoute.HOLIDAY_SETTINGS) },
+                onOpenBackup = { navController.navigate(AppRoute.BACKUP_SETTINGS) },
+                onOpenPermission = { navController.navigate(AppRoute.PERMISSION_SETTINGS) },
+                onOpenApi = { navController.navigate(AppRoute.API_SETTINGS) }
+            )
+        }
+
+        composable(AppRoute.GENERAL_SETTINGS) {
+            GeneralSettingsScreen(
+                onBack = { navController.popBackStack() },
+                onSaved = { navController.popBackStack() }
+            )
+        }
+
+        composable(AppRoute.REMINDER_SETTINGS) {
+            ReminderSettingsScreen(
+                onBack = { navController.popBackStack() },
+                onSaved = { navController.popBackStack() }
+            )
+        }
+
+        composable(AppRoute.HOLIDAY_SETTINGS) {
+            HolidaySettingsScreen(
+                onBack = { navController.popBackStack() }
+            )
+        }
+
+        composable(AppRoute.BACKUP_SETTINGS) {
+            BackupSettingsScreen(
+                onBack = { navController.popBackStack() }
+            )
+        }
+
+        composable(AppRoute.PERMISSION_SETTINGS) {
+            PermissionSettingsScreen(
+                onBack = { navController.popBackStack() }
+            )
+        }
+
+        composable(AppRoute.API_SETTINGS) {
+            ApiSettingsScreen(
+                onBack = { navController.popBackStack() },
+                onCreateApi = { navController.navigate(AppRoute.apiConfigEdit()) },
+                onEditApi = { apiId -> navController.navigate(AppRoute.apiConfigEdit(apiId)) }
             )
         }
 

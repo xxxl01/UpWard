@@ -22,5 +22,9 @@ data class ProjectEntity(
     @ColumnInfo(name = "next_required_message_start_at")
     val nextRequiredMessageStartAt: String = "",
     @ColumnInfo(name = "next_required_message_end_at")
-    val nextRequiredMessageEndAt: String = ""
+    val nextRequiredMessageEndAt: String = "",
+    @ColumnInfo(name = "inner_voice")
+    val innerVoice: String = "",
+    @ColumnInfo(name = "inner_voice_enabled")
+    val innerVoiceEnabled: Boolean = false
 )

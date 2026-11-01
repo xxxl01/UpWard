@@ -30,14 +30,10 @@ object RequiredMessageReminderScheduler {
             return
         }
         val now = OffsetDateTime.now()
-        if (!endTime.isAfter(now)) {
-            cancel(context, projectId)
-            return
-        }
-
-        val triggerAtMillis = if (now.isBefore(startTime)) {
+        val triggerAtMillis = if (now.isBefore(startTime) && now.isBefore(endTime)) {
             startTime.toInstant().toEpochMilli()
         } else {
+            // 已过期的窗口也交给接收器结算；启动或重启后不能直接丢弃。
             System.currentTimeMillis() + 1000L
         }
         scheduleAt(context, projectId, triggerAtMillis)
@@ -76,11 +72,11 @@ object RequiredMessageReminderScheduler {
     private fun scheduleAt(context: Context, projectId: Long, triggerAtMillis: Long) {
         val alarmManager = context.getSystemService(AlarmManager::class.java)
         val intent = pendingIntent(context, projectId, PendingIntent.FLAG_UPDATE_CURRENT)
-        if (!alarmManager.canScheduleExactAlarms()) {
-            alarmManager.cancel(intent)
-            return
+        if (alarmManager.canScheduleExactAlarms()) {
+            alarmManager.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerAtMillis, intent)
+        } else {
+            alarmManager.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerAtMillis, intent)
         }
-        alarmManager.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerAtMillis, intent)
     }
 
     private fun pendingIntent(context: Context, projectId: Long, flag: Int): PendingIntent {

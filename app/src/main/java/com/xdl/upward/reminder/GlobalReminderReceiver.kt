@@ -32,6 +32,11 @@ class GlobalReminderReceiver : BroadcastReceiver() {
                 if (period.isBlank()) return@launch
                 val currentRepository = ConfigRepository(AppDatabase.getInstance(context).configDao())
                 repository = currentRepository
+                if (currentRepository.getValue("global_reminder_${period}_enabled") == "0") {
+                    GlobalReminderScheduler.cancel(context, period)
+                    context.getSystemService(NotificationManager::class.java).cancel(notificationId(period))
+                    return@launch
+                }
                 if (GlobalReminderScheduler.isStopTodayAction(intent.action)) {
                     val today = if (dateText.isBlank()) LocalDate.now().toString() else dateText
                     currentRepository.setValue("global_reminder_stopped_${period}_date", today)
@@ -77,7 +82,7 @@ class GlobalReminderReceiver : BroadcastReceiver() {
                         GlobalReminderScheduler.schedule(
                             context,
                             period,
-                            repository?.let { timeText(it, period) } ?: defaultTime(period)
+                            repository?.let { timeText(it, period) } ?: GlobalReminderScheduler.defaultTime(period)
                         )
                     } else {
                         val nextTime = OffsetDateTime.now().plusMinutes(10)
@@ -92,7 +97,8 @@ class GlobalReminderReceiver : BroadcastReceiver() {
                             GlobalReminderScheduler.schedule(
                                 context,
                                 period,
-                                repository?.let { timeText(it, period) } ?: defaultTime(period)
+                                repository?.let { timeText(it, period) }
+                                    ?: GlobalReminderScheduler.defaultTime(period)
                             )
                         }
                     }
@@ -103,12 +109,6 @@ class GlobalReminderReceiver : BroadcastReceiver() {
                 pendingResult.finish()
             }
         }
-    }
-
-    private fun defaultTime(period: String): String = when (period) {
-        "morning" -> "07:00"
-        "afternoon" -> "13:00"
-        else -> "19:30"
     }
 
     private suspend fun timeText(repository: ConfigRepository, period: String): String {

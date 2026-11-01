@@ -182,6 +182,8 @@ class BackupRepository(
                     .put("next_required_message_at", project.nextRequiredMessageAt)
                     .put("next_required_message_start_at", project.nextRequiredMessageStartAt)
                     .put("next_required_message_end_at", project.nextRequiredMessageEndAt)
+                    .put("inner_voice", project.innerVoice)
+                    .put("inner_voice_enabled", project.innerVoiceEnabled)
             )
         }
         return array
@@ -283,7 +285,9 @@ class BackupRepository(
                     createdAt = item.getString("created_at"),
                     nextRequiredMessageAt = item.optString("next_required_message_at"),
                     nextRequiredMessageStartAt = item.optString("next_required_message_start_at"),
-                    nextRequiredMessageEndAt = item.optString("next_required_message_end_at")
+                    nextRequiredMessageEndAt = item.optString("next_required_message_end_at"),
+                    innerVoice = item.optString("inner_voice"),
+                    innerVoiceEnabled = item.optBoolean("inner_voice_enabled", false)
                 )
             )
         }

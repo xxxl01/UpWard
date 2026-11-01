@@ -15,21 +15,25 @@ object GlobalReminderScheduler {
     private const val ACTION_STOP_TODAY = "com.xdl.upward.action.STOP_GLOBAL_REMINDER_TODAY"
     const val EXTRA_DATE = "date"
     const val EXTRA_PERIOD = "period"
+    val PERIODS = listOf("morning", "afternoon", "evening")
 
     suspend fun reschedule(context: Context) {
         val repository = ConfigRepository(AppDatabase.getInstance(context).configDao())
-        scheduleAll(
-            context,
-            repository.getValue("global_reminder_morning_time") ?: "07:00",
-            repository.getValue("global_reminder_afternoon_time") ?: "13:00",
-            repository.getValue("global_reminder_evening_time") ?: "19:30"
-        )
+        for (period in PERIODS) {
+            val time = repository.getValue("global_reminder_${period}_time") ?: defaultTime(period)
+            val enabled = repository.getValue("global_reminder_${period}_enabled") != "0"
+            if (enabled) {
+                schedule(context, period, time)
+            } else {
+                cancel(context, period)
+            }
+        }
     }
 
-    fun scheduleAll(context: Context, morningTime: String, afternoonTime: String, eveningTime: String) {
-        schedule(context, "morning", morningTime)
-        schedule(context, "afternoon", afternoonTime)
-        schedule(context, "evening", eveningTime)
+    fun defaultTime(period: String): String = when (period) {
+        "morning" -> "07:00"
+        "afternoon" -> "13:00"
+        else -> "19:30"
     }
 
     fun schedule(context: Context, period: String, timeText: String) {

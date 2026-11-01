@@ -10,7 +10,7 @@ import com.xdl.upward.data.repository.ConfigRepository
 import com.xdl.upward.data.repository.ChallengeRepository
 import com.xdl.upward.data.repository.MessageRepository
 import com.xdl.upward.data.repository.ProjectRepository
-import com.xdl.upward.reminder.RequiredMessageReminderScheduler
+import com.xdl.upward.reminder.RequiredMessageDeadlineHandler
 import com.xdl.upward.reminder.GlobalReminderScheduler
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -35,6 +35,7 @@ data class GlobalReminderStatus(
     val period: String,
     val label: String,
     val time: String,
+    val switchOn: Boolean,
     val enabled: Boolean
 )
 
@@ -67,9 +68,9 @@ class ProjectListViewModel(application: Application) : AndroidViewModel(applicat
 
     private val _globalReminderStatuses = MutableStateFlow(
         listOf(
-            GlobalReminderStatus("morning", "上午", "07:00", false),
-            GlobalReminderStatus("afternoon", "下午", "13:00", false),
-            GlobalReminderStatus("evening", "晚上", "19:30", false)
+            GlobalReminderStatus("morning", "上午", "07:00", true, false),
+            GlobalReminderStatus("afternoon", "下午", "13:00", true, false),
+            GlobalReminderStatus("evening", "晚上", "19:30", true, false)
         )
     )
     val globalReminderStatuses: StateFlow<List<GlobalReminderStatus>> = _globalReminderStatuses.asStateFlow()
@@ -89,17 +90,20 @@ class ProjectListViewModel(application: Application) : AndroidViewModel(applicat
             val alarmManager = getApplication<Application>().getSystemService(AlarmManager::class.java)
             val canSchedule = alarmManager.canScheduleExactAlarms()
             val periods = listOf(
-                "morning" to ("上午" to (configRepository.getValue("global_reminder_morning_time") ?: "07:00")),
-                "afternoon" to ("下午" to (configRepository.getValue("global_reminder_afternoon_time") ?: "13:00")),
-                "evening" to ("晚上" to (configRepository.getValue("global_reminder_evening_time") ?: "19:30"))
+                "morning" to "上午",
+                "afternoon" to "下午",
+                "evening" to "晚上"
             )
-            _globalReminderStatuses.value = periods.map { (period, labelAndTime) ->
-                val (label, time) = labelAndTime
+            _globalReminderStatuses.value = periods.map { (period, label) ->
+                val time = configRepository.getValue("global_reminder_${period}_time")
+                    ?: GlobalReminderScheduler.defaultTime(period)
+                val switchOn = configRepository.getValue("global_reminder_${period}_enabled") != "0"
                 GlobalReminderStatus(
                     period = period,
                     label = label,
                     time = time,
-                    enabled = canSchedule && GlobalReminderScheduler.hasActiveAlarm(getApplication(), period)
+                    switchOn = switchOn,
+                    enabled = switchOn && canSchedule && GlobalReminderScheduler.hasActiveAlarm(getApplication(), period)
                 )
             }
         }
@@ -115,30 +119,11 @@ class ProjectListViewModel(application: Application) : AndroidViewModel(applicat
     }
 
     private suspend fun checkRequiredMessageDeadlines() {
-        val now = OffsetDateTime.now()
         val projects = repository.getProjects()
         for (project in projects) {
-            if (project.nextRequiredMessageEndAt.isBlank()) {
-                continue
+            if (project.nextRequiredMessageEndAt.isNotBlank()) {
+                RequiredMessageDeadlineHandler.checkAndRecord(getApplication(), project.id)
             }
-            val endTime = try {
-                OffsetDateTime.parse(project.nextRequiredMessageEndAt)
-            } catch (e: Exception) {
-                repository.setNextRequiredMessagePeriod(project.id, "", "")
-                RequiredMessageReminderScheduler.cancel(getApplication(), project.id)
-                continue
-            }
-            if (now.isBefore(endTime.plusMinutes(1))) {
-                continue
-            }
-
-            repository.setNextRequiredMessagePeriod(project.id, "", "")
-            RequiredMessageReminderScheduler.cancel(getApplication(), project.id)
-            // 违规次数持续累加；达到 10 次后进入惩罚状态，每笔捐款由告诫页 AI 确认后抵扣 10 次
-            val currentCount = configRepository.getValue("violation_count")?.toIntOrNull() ?: 0
-            val finalCount = currentCount + 1
-            configRepository.setValue("violation_count", finalCount.toString())
-            _violationCount.value = finalCount
         }
     }
 

@@ -4,6 +4,8 @@ import android.util.Base64
 import com.xdl.upward.data.local.AiApiEntity
 import com.xdl.upward.domain.AiChatMessage
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.Request
@@ -211,7 +213,18 @@ class AiApiService {
             val request = requestBuilder.build()
             val fullContent = StringBuilder()
 
-            AiHttpClient.client.newCall(request).execute().use { response ->
+            val call = AiHttpClient.client.newCall(request)
+            // 外部协程一旦取消就立刻中断阻塞中的网络调用。直接注册在 job 完成回调上不行：
+            // 协程正阻塞在 call.execute()/读取响应体，取消要等协程结束，协程结束又要等取消，会互相死锁，停止按钮因此失效。
+            val cancelWatcher = launch {
+                try {
+                    awaitCancellation()
+                } finally {
+                    call.cancel()
+                }
+            }
+            try {
+                call.execute().use { response ->
                 if (!response.isSuccessful) {
                     val bodyText = response.body?.string().orEmpty()
                     throw IllegalStateException("AI 请求失败：${response.code} $bodyText")
@@ -298,6 +311,9 @@ class AiApiService {
                         }
                     }
                 }
+                }
+            } finally {
+                cancelWatcher.cancel()
             }
 
             fullContent.toString().trim()

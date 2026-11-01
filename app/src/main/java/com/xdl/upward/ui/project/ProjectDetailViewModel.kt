@@ -18,7 +18,7 @@ import com.xdl.upward.data.repository.MessageRepository
 import com.xdl.upward.data.repository.ProjectRepository
 import com.xdl.upward.domain.AiMessageBuilder
 import com.xdl.upward.domain.ChatExecutor
-import com.xdl.upward.reminder.RequiredMessageReminderScheduler
+import com.xdl.upward.reminder.RequiredMessageDeadlineHandler
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.Flow
@@ -31,8 +31,6 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 import java.io.FileOutputStream
-import java.time.LocalDate
-import java.time.OffsetDateTime
 
 class ProjectDetailViewModel(application: Application) : AndroidViewModel(application) {
     private val database = AppDatabase.getInstance(application)
@@ -177,94 +175,23 @@ class ProjectDetailViewModel(application: Application) : AndroidViewModel(applic
         viewModelScope.launch {
             // 挑战缺卡检测：挑战期内有日期没打卡则进入失败惩罚流程。
             challengeRepository.checkForMissedDays(projectId)
-
-            val project = repository.getProject(projectId) ?: return@launch
-            if (project.nextRequiredMessageEndAt.isBlank()) return@launch
-
-            val endTime = try {
-                OffsetDateTime.parse(project.nextRequiredMessageEndAt)
-            } catch (e: Exception) {
-                repository.setNextRequiredMessagePeriod(projectId, "", "")
-                RequiredMessageReminderScheduler.cancel(getApplication(), projectId)
-                return@launch
-            }
-            if (OffsetDateTime.now().isBefore(endTime.plusMinutes(1))) return@launch
-
-            // 处罚后立即以当前时间开始新的 25 分钟窗口，不能让窗口直接消失。
-            val nextStartTime = OffsetDateTime.now()
-            val nextEndTime = nextStartTime.plusMinutes(25)
-            repository.setNextRequiredMessagePeriod(projectId, nextStartTime.toString(), nextEndTime.toString())
-            RequiredMessageReminderScheduler.schedule(getApplication(), projectId, nextStartTime.toString(), nextEndTime.toString())
-            // 违规次数持续累加；达到 10 次后进入惩罚状态，每笔捐款由告诫页 AI 确认后抵扣 10 次
-            val currentCount = configRepository.getValue("violation_count")?.toIntOrNull() ?: 0
-            val finalCount = currentCount + 1
-            configRepository.setValue("violation_count", finalCount.toString())
-            _violationCount.value = finalCount
+            val finalCount = RequiredMessageDeadlineHandler.checkAndRecord(getApplication(), projectId)
+                ?: return@launch
             _errorMessage.value = if (finalCount >= 10) {
-                "已错过指定回复时间，违规累计已达到惩罚线：需捐款 5 元并把截图发给违规告诫页的 AI，每笔捐款只能抵扣 10 次违规。"
+                "已错过指定回复时间，违规累计已达到惩罚线：需捐款 3 元并把截图发给违规告诫页的 AI，每笔捐款只能抵扣 10 次违规。"
             } else {
                 "已错过指定回复时间，已记为违规 $finalCount/10。"
             }
         }
     }
 
-    fun setNextRequiredMessageTime(
-        projectId: Long,
-        startDateText: String,
-        startHourText: String,
-        startMinuteText: String
-    ) {
-        val startDate = try {
-            LocalDate.parse(startDateText.trim())
-        } catch (e: Exception) {
-            _errorMessage.value = "开始日期格式不正确，请按 yyyy-MM-dd 输入"
-            return
-        }
-        val startHour = startHourText.trim().toIntOrNull()
-        if (startHour == null || startHour !in 0..23) {
-            _errorMessage.value = "开始小时必须是 0-23"
-            return
-        }
-        val startMinute = startMinuteText.trim().toIntOrNull()
-        if (startMinute == null || startMinute !in 0..59) {
-            _errorMessage.value = "开始分钟必须是 0-59"
-            return
-        }
-
-        val startTime = startDate.atTime(startHour, startMinute).atOffset(OffsetDateTime.now().offset)
-        val endTime = startTime.plusMinutes(25)
-        if (startTime.isBefore(OffsetDateTime.now())) {
-            _errorMessage.value = "开始时间不能早于当前时间"
-            return
-        }
-
-        _errorMessage.value = ""
-        viewModelScope.launch {
-            val project = repository.getProject(projectId) ?: return@launch
-            if (project.nextRequiredMessageEndAt.isNotBlank()) {
-                val oldStartTime = try {
-                    OffsetDateTime.parse(project.nextRequiredMessageStartAt)
-                } catch (e: Exception) {
-                    null
-                }
-                if (oldStartTime == null) {
-                    repository.setNextRequiredMessagePeriod(projectId, startTime.toString(), endTime.toString())
-                    RequiredMessageReminderScheduler.schedule(getApplication(), projectId, startTime.toString(), endTime.toString())
-                    return@launch
-                }
-                if (!startTime.isBefore(oldStartTime)) {
-                    _errorMessage.value = "新的开始时间必须早于原开始时间"
-                    return@launch
-                }
-            }
-            repository.setNextRequiredMessagePeriod(projectId, startTime.toString(), endTime.toString())
-            RequiredMessageReminderScheduler.schedule(getApplication(), projectId, startTime.toString(), endTime.toString())
-        }
-    }
-
     // 发送消息的完整请求流程（含流式写库、工具调用）由 ChatExecutor 在后台执行，
     // 这里只做输入校验和触发，退出页面后请求继续，回到页面时状态从执行器恢复。
-    fun sendUserMessage(projectId: Long) {
+    fun sendUserMessage(
+        projectId: Long,
+        criticalMode: Boolean = false,
+        experienceMode: Boolean = false
+    ) {
         val content = _input.value.trim()
         val imagePaths = _selectedImagePaths.value
         if ((content.isEmpty() && imagePaths.isEmpty()) || _loading.value) return
@@ -273,14 +200,37 @@ class ProjectDetailViewModel(application: Application) : AndroidViewModel(applic
         if (_violationCount.value >= 10) {
             _input.value = ""
             _selectedImagePaths.value = emptyList()
-            _errorMessage.value = "你已累计违规 ${_violationCount.value} 次，处于惩罚状态，消息发送已被拦截。请到项目列表页的“违规告诫”入口捐款 5 元，把捐款截图发给 AI；每笔捐款只能抵扣 10 次违规。"
+            _errorMessage.value = "你已累计违规 ${_violationCount.value} 次，处于惩罚状态，消息发送已被拦截。请到项目列表页的“违规告诫”入口捐款 3 元，把捐款截图发给 AI；每笔捐款只能抵扣 10 次违规。"
             return
         }
 
         _input.value = ""
         _selectedImagePaths.value = emptyList()
         _errorMessage.value = ""
-        ChatExecutor.sendUserMessage(getApplication(), projectId, content, imagePaths)
+        ChatExecutor.sendUserMessage(
+            getApplication(),
+            projectId,
+            content,
+            imagePaths,
+            criticalMode,
+            experienceMode
+        )
+    }
+
+    fun saveInnerVoice(projectId: Long, content: String, enabled: Boolean) {
+        viewModelScope.launch {
+            repository.saveInnerVoice(projectId, content.trim(), enabled)
+        }
+    }
+
+    fun setInnerVoiceEnabled(projectId: Long, enabled: Boolean) {
+        viewModelScope.launch {
+            repository.setInnerVoiceEnabled(projectId, enabled)
+        }
+    }
+
+    fun stopUserMessage(projectId: Long) {
+        ChatExecutor.stop(projectId)
     }
 
     fun resendLastMessage(projectId: Long, messageId: Long) {
@@ -288,7 +238,7 @@ class ProjectDetailViewModel(application: Application) : AndroidViewModel(applic
 
         // 惩罚状态同样拦截重发
         if (_violationCount.value >= 10) {
-            _errorMessage.value = "你已累计违规 ${_violationCount.value} 次，处于惩罚状态，消息发送已被拦截。请到“违规告诫”页捐款 5 元并截图给 AI；每笔捐款只能抵扣 10 次违规。"
+            _errorMessage.value = "你已累计违规 ${_violationCount.value} 次，处于惩罚状态，消息发送已被拦截。请到“违规告诫”页捐款 3 元并截图给 AI；每笔捐款只能抵扣 10 次违规。"
             return
         }
 

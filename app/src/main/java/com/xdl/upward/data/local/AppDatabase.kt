@@ -15,9 +15,10 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         AiApiEntity::class,
         ConfigEntity::class,
         ChallengeEntity::class,
-        ChallengeCheckInEntity::class
+        ChallengeCheckInEntity::class,
+        HolidayEntity::class
     ],
-    version = 12,
+    version = 15,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -28,6 +29,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun configDao(): ConfigDao
     abstract fun challengeDao(): ChallengeDao
     abstract fun challengeCheckInDao(): ChallengeCheckInDao
+    abstract fun holidayDao(): HolidayDao
 
     companion object {
         @Volatile
@@ -170,6 +172,59 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        private val MIGRATION_12_13 = object : Migration(12, 13) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                // 中国法定节假日/调休缓存表：按年从公开接口拉取后落库
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS holiday (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        year INTEGER NOT NULL,
+                        date TEXT NOT NULL,
+                        holiday INTEGER NOT NULL,
+                        name TEXT NOT NULL
+                    )
+                    """.trimIndent()
+                )
+                db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_holiday_date ON holiday(date)")
+            }
+        }
+
+        private val MIGRATION_13_14 = object : Migration(13, 14) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                // 全局提醒分段开关：默认全部开启，兼容旧库
+                db.execSQL(
+                    """
+                    INSERT INTO config (`key`, value)
+                    SELECT 'global_reminder_morning_enabled', '1'
+                    WHERE NOT EXISTS (SELECT 1 FROM config WHERE `key` = 'global_reminder_morning_enabled')
+                    """.trimIndent()
+                )
+                db.execSQL(
+                    """
+                    INSERT INTO config (`key`, value)
+                    SELECT 'global_reminder_afternoon_enabled', '1'
+                    WHERE NOT EXISTS (SELECT 1 FROM config WHERE `key` = 'global_reminder_afternoon_enabled')
+                    """.trimIndent()
+                )
+                db.execSQL(
+                    """
+                    INSERT INTO config (`key`, value)
+                    SELECT 'global_reminder_evening_enabled', '1'
+                    WHERE NOT EXISTS (SELECT 1 FROM config WHERE `key` = 'global_reminder_evening_enabled')
+                    """.trimIndent()
+                )
+            }
+        }
+
+        private val MIGRATION_14_15 = object : Migration(14, 15) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                // 项目级“心里话”：内容与开关，一对一存在 project 表
+                db.execSQL("ALTER TABLE project ADD COLUMN inner_voice TEXT NOT NULL DEFAULT ''")
+                db.execSQL("ALTER TABLE project ADD COLUMN inner_voice_enabled INTEGER NOT NULL DEFAULT 0")
+            }
+        }
+
         fun getInstance(context: Context): AppDatabase {
             return instance ?: synchronized(this) {
                 instance ?: Room.databaseBuilder(
@@ -177,7 +232,7 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     "upward.db"
                 )
-                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12)
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15)
                     .addCallback(object : Callback() {
                         override fun onOpen(db: SupportSQLiteDatabase) {
                             super.onOpen(db)
@@ -215,6 +270,27 @@ abstract class AppDatabase : RoomDatabase() {
                                 INSERT INTO config (`key`, value)
                                 SELECT 'global_reminder_evening_time', '19:30'
                                 WHERE NOT EXISTS (SELECT 1 FROM config WHERE `key` = 'global_reminder_evening_time')
+                                """.trimIndent()
+                            )
+                            db.execSQL(
+                                """
+                                INSERT INTO config (`key`, value)
+                                SELECT 'global_reminder_morning_enabled', '1'
+                                WHERE NOT EXISTS (SELECT 1 FROM config WHERE `key` = 'global_reminder_morning_enabled')
+                                """.trimIndent()
+                            )
+                            db.execSQL(
+                                """
+                                INSERT INTO config (`key`, value)
+                                SELECT 'global_reminder_afternoon_enabled', '1'
+                                WHERE NOT EXISTS (SELECT 1 FROM config WHERE `key` = 'global_reminder_afternoon_enabled')
+                                """.trimIndent()
+                            )
+                            db.execSQL(
+                                """
+                                INSERT INTO config (`key`, value)
+                                SELECT 'global_reminder_evening_enabled', '1'
+                                WHERE NOT EXISTS (SELECT 1 FROM config WHERE `key` = 'global_reminder_evening_enabled')
                                 """.trimIndent()
                             )
                         }

@@ -461,7 +461,11 @@ private fun ReminderStatusItem(
         "afternoon" -> LucideR.drawable.lucide_ic_sun
         else -> LucideR.drawable.lucide_ic_moon
     }
-    val statusColor = if (status.enabled) Color(0xFF2E7D32) else MaterialTheme.colorScheme.error
+    val statusColor = when {
+        !status.switchOn -> MaterialTheme.colorScheme.onSurfaceVariant
+        status.enabled -> Color(0xFF2E7D32)
+        else -> MaterialTheme.colorScheme.error
+    }
     Row(
         modifier = modifier
             .clip(RoundedCornerShape(10.dp))
@@ -484,7 +488,7 @@ private fun ReminderStatusItem(
                 maxLines = 1
             )
             Text(
-                text = status.time,
+                text = if (status.switchOn) status.time else "已关闭",
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )

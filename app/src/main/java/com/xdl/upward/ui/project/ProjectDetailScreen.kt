@@ -44,6 +44,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.IconButton
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.windowInsetsPadding
@@ -157,10 +158,10 @@ fun ProjectDetailScreen(
         viewModel.addSelectedImages(uris)
     }
     val displayMessages = remember(messages) { messages.asReversed() }
-    var showNextRequiredDialog by remember { mutableStateOf(false) }
-    var nextRequiredStartDateInput by remember { mutableStateOf("") }
-    var nextRequiredStartHourInput by remember { mutableStateOf("") }
-    var nextRequiredStartMinuteInput by remember { mutableStateOf("") }
+    var editingInnerVoice by remember { mutableStateOf(false) }
+    var innerVoiceText by remember { mutableStateOf("") }
+    var criticalMode by remember { mutableStateOf(false) }
+    var experienceMode by remember { mutableStateOf(false) }
     val isNearBottom by remember {
         derivedStateOf { listState.firstVisibleItemIndex <= 1 }
     }
@@ -209,32 +210,7 @@ fun ProjectDetailScreen(
             onOpenContextSummary = onOpenContextSummary,
             onOpenChallenge = onOpenChallenge,
             onGenerateTodayRecord = { viewModel.generateTodayRecord(projectId) },
-            onImportMessages = { importLauncher.launch(arrayOf("application/json", "text/*", "*/*")) },
-            hasNextRequiredMessageTime = !project?.nextRequiredMessageEndAt.isNullOrBlank(),
-            onSetNextRequiredMessageTime = {
-                val oldStartTime = try {
-                    OffsetDateTime.parse(project?.nextRequiredMessageStartAt.orEmpty())
-                } catch (e: Exception) {
-                    null
-                }
-                val oldEndTime = try {
-                    OffsetDateTime.parse(project?.nextRequiredMessageEndAt.orEmpty())
-                } catch (e: Exception) {
-                    null
-                }
-                if (oldStartTime != null && oldEndTime != null) {
-                    nextRequiredStartDateInput = oldStartTime.toLocalDate().toString()
-                    nextRequiredStartHourInput = oldStartTime.hour.toString().padStart(2, '0')
-                    nextRequiredStartMinuteInput = oldStartTime.minute.toString().padStart(2, '0')
-                    showNextRequiredDialog = true
-                } else {
-                    val now = OffsetDateTime.now()
-                    nextRequiredStartDateInput = now.toLocalDate().toString()
-                    nextRequiredStartHourInput = now.hour.toString().padStart(2, '0')
-                    nextRequiredStartMinuteInput = "00"
-                    showNextRequiredDialog = true
-                }
-            }
+            onImportMessages = { importLauncher.launch(arrayOf("application/json", "text/*", "*/*")) }
         )
 
         if (loading) {
@@ -367,52 +343,108 @@ fun ProjectDetailScreen(
             input = input,
             selectedImagePaths = selectedImagePaths,
             loading = loading,
+            innerVoiceEnabled = project?.innerVoiceEnabled == true,
+            criticalMode = criticalMode,
+            experienceMode = experienceMode,
             onInputChange = viewModel::updateInput,
             onPickImage = { imagePickerLauncher.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
             onRemoveImage = viewModel::removeSelectedImage,
-            onSend = { viewModel.sendUserMessage(projectId) }
+            onToggleInnerVoice = {
+                if (project?.innerVoiceEnabled == true) {
+                    viewModel.setInnerVoiceEnabled(projectId, false)
+                } else {
+                    criticalMode = false
+                    experienceMode = false
+                    if (project?.innerVoice.isNullOrBlank()) {
+                        innerVoiceText = ""
+                        editingInnerVoice = true
+                    } else {
+                        viewModel.setInnerVoiceEnabled(projectId, true)
+                    }
+                }
+            },
+            onEditInnerVoice = {
+                innerVoiceText = project?.innerVoice.orEmpty()
+                editingInnerVoice = true
+            },
+            onToggleCritical = {
+                val enabled = !criticalMode
+                criticalMode = enabled
+                if (enabled) {
+                    experienceMode = false
+                    viewModel.setInnerVoiceEnabled(projectId, false)
+                }
+            },
+            onToggleExperience = {
+                val enabled = !experienceMode
+                experienceMode = enabled
+                if (enabled) {
+                    criticalMode = false
+                    viewModel.setInnerVoiceEnabled(projectId, false)
+                }
+            },
+            onSend = { viewModel.sendUserMessage(projectId, criticalMode, experienceMode) },
+            onStop = { viewModel.stopUserMessage(projectId) }
         )
     }
 
-    if (showNextRequiredDialog) {
+    if (editingInnerVoice) {
         AlertDialog(
-            onDismissRequest = { showNextRequiredDialog = false },
-            title = { Text("指定回复时间") },
+            onDismissRequest = { editingInnerVoice = false },
+            title = { Text("心里话") },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(
-                        text = "在这个时间段内必须发送一条消息。结束时间固定为开始时间之后 25 分钟；已指定时只能提前开始时间。",
+                        text = "写下一句此刻真实的内心活动。开启后，它会随你下一条消息一起悄悄告诉 AI；AI 不会点破，只会更好地接住你的情绪。",
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        style = MaterialTheme.typography.bodyMedium
+                        style = MaterialTheme.typography.bodySmall
                     )
-                    RequiredTimeRow(
-                        title = "开始",
-                        date = nextRequiredStartDateInput,
-                        onDateChange = { nextRequiredStartDateInput = it },
-                        hour = nextRequiredStartHourInput,
-                        onHourChange = { nextRequiredStartHourInput = it },
-                        minute = nextRequiredStartMinuteInput,
-                        onMinuteChange = { nextRequiredStartMinuteInput = it }
-                    )
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = 110.dp, max = 240.dp)
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(MaterialTheme.colorScheme.background)
+                            .border(
+                                1.dp,
+                                MaterialTheme.colorScheme.outline.copy(alpha = 0.35f),
+                                RoundedCornerShape(8.dp)
+                            )
+                            .padding(10.dp)
+                    ) {
+                        BasicTextField(
+                            value = innerVoiceText,
+                            onValueChange = { innerVoiceText = it },
+                            modifier = Modifier.fillMaxWidth(),
+                            textStyle = TextStyle(
+                                color = MaterialTheme.colorScheme.onSurface,
+                                fontSize = 15.sp,
+                                lineHeight = 20.sp
+                            ),
+                            cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+                            minLines = 4,
+                            maxLines = 10
+                        )
+                    }
                 }
             },
             confirmButton = {
                 TextButton(
                     onClick = {
-                        viewModel.setNextRequiredMessageTime(
-                            projectId,
-                            nextRequiredStartDateInput,
-                            nextRequiredStartHourInput,
-                            nextRequiredStartMinuteInput
-                        )
-                        showNextRequiredDialog = false
+                        val content = innerVoiceText.trim()
+                        if (content.isNotBlank()) {
+                            criticalMode = false
+                            experienceMode = false
+                        }
+                        viewModel.saveInnerVoice(projectId, content, content.isNotBlank())
+                        editingInnerVoice = false
                     }
                 ) {
-                    Text("确定")
+                    Text("保存")
                 }
             },
             dismissButton = {
-                TextButton(onClick = { showNextRequiredDialog = false }) {
+                TextButton(onClick = { editingInnerVoice = false }) {
                     Text("取消")
                 }
             }
@@ -429,9 +461,7 @@ private fun ProjectHeaderBar(
     onOpenContextSummary: () -> Unit,
     onOpenChallenge: () -> Unit,
     onGenerateTodayRecord: () -> Unit,
-    onImportMessages: () -> Unit,
-    hasNextRequiredMessageTime: Boolean,
-    onSetNextRequiredMessageTime: () -> Unit
+    onImportMessages: () -> Unit
 ) {
     var menuExpanded by remember { mutableStateOf(false) }
 
@@ -525,13 +555,6 @@ private fun ProjectHeaderBar(
                         }
                     )
                     DropdownMenuItem(
-                        text = { Text(if (hasNextRequiredMessageTime) "提前指定回复时间" else "指定回复时间") },
-                        onClick = {
-                            menuExpanded = false
-                            onSetNextRequiredMessageTime()
-                        }
-                    )
-                    DropdownMenuItem(
                         text = { Text("导入消息记录") },
                         onClick = {
                             menuExpanded = false
@@ -554,96 +577,26 @@ private fun displayNextRequiredMessageTime(time: String): String {
     }
 }
 
-@Composable
-private fun RequiredTimeRow(
-    title: String,
-    date: String,
-    onDateChange: (String) -> Unit,
-    hour: String,
-    onHourChange: (String) -> Unit,
-    minute: String,
-    onMinuteChange: (String) -> Unit
-) {
-    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        Text(
-            text = title,
-            color = MaterialTheme.colorScheme.onSurface,
-            style = MaterialTheme.typography.labelMedium
-        )
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            RequiredTimePartInput(
-                value = date,
-                onValueChange = onDateChange,
-                placeholder = "yyyy-MM-dd",
-                modifier = Modifier.weight(2f)
-            )
-            RequiredTimePartInput(
-                value = hour,
-                onValueChange = onHourChange,
-                placeholder = "HH",
-                modifier = Modifier.weight(1f)
-            )
-            RequiredTimePartInput(
-                value = minute,
-                onValueChange = onMinuteChange,
-                placeholder = "MM",
-                modifier = Modifier.weight(1f)
-            )
-        }
-    }
-}
-
-@Composable
-private fun RequiredTimePartInput(
-    value: String,
-    onValueChange: (String) -> Unit,
-    placeholder: String,
-    modifier: Modifier = Modifier
-) {
-    Box(
-        modifier = modifier
-            .heightIn(min = 42.dp)
-            .clip(RoundedCornerShape(8.dp))
-            .background(MaterialTheme.colorScheme.background)
-            .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.35f), RoundedCornerShape(8.dp))
-            .padding(horizontal = 10.dp, vertical = 10.dp),
-        contentAlignment = Alignment.CenterStart
-    ) {
-        if (value.isBlank()) {
-            Text(
-                text = placeholder,
-                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.65f),
-                fontSize = 14.sp
-            )
-        }
-        BasicTextField(
-            value = value,
-            onValueChange = onValueChange,
-            modifier = Modifier.fillMaxWidth(),
-            textStyle = TextStyle(
-                color = MaterialTheme.colorScheme.onSurface,
-                fontSize = 14.sp,
-                lineHeight = 18.sp
-            ),
-            cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
-            singleLine = true
-        )
-    }
-}
-
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun ProjectChatInputBar(
     input: String,
     selectedImagePaths: List<String>,
     loading: Boolean,
+    innerVoiceEnabled: Boolean,
+    criticalMode: Boolean,
+    experienceMode: Boolean,
     onInputChange: (String) -> Unit,
     onPickImage: () -> Unit,
     onRemoveImage: (String) -> Unit,
-    onSend: () -> Unit
+    onToggleInnerVoice: () -> Unit,
+    onEditInnerVoice: () -> Unit,
+    onToggleCritical: () -> Unit,
+    onToggleExperience: () -> Unit,
+    onSend: () -> Unit,
+    onStop: () -> Unit
 ) {
+    val activeColor = Color(0xFF2E7D32)
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -683,55 +636,94 @@ private fun ProjectChatInputBar(
                 }
             }
         }
-        Row(
-            verticalAlignment = Alignment.Bottom,
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(min = 38.dp, max = 112.dp)
+                .clip(RoundedCornerShape(8.dp))
+                .background(MaterialTheme.colorScheme.background)
+                .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.35f), RoundedCornerShape(8.dp))
+                .padding(horizontal = 12.dp, vertical = 8.dp),
+            contentAlignment = Alignment.CenterStart
         ) {
-            Box(
-                modifier = Modifier
-                    .size(38.dp)
-                    .clip(RoundedCornerShape(8.dp))
-                    .background(MaterialTheme.colorScheme.secondaryContainer)
-                    .clickable(enabled = !loading) { onPickImage() },
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    painter = painterResource(LucideR.drawable.lucide_ic_image),
-                    contentDescription = "选择图片",
-                    tint = MaterialTheme.colorScheme.onSecondaryContainer,
-                    modifier = Modifier.size(18.dp)
+            if (input.isBlank()) {
+                Text(
+                    text = "输入今天的状态、计划或阻力",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.65f),
+                    fontSize = 15.sp
                 )
             }
-            Box(
-                modifier = Modifier
-                    .weight(1f)
-                    .heightIn(min = 38.dp, max = 112.dp)
-                    .clip(RoundedCornerShape(8.dp))
-                    .background(MaterialTheme.colorScheme.background)
-                    .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.35f), RoundedCornerShape(8.dp))
-                    .padding(horizontal = 12.dp, vertical = 8.dp),
-                contentAlignment = Alignment.CenterStart
-            ) {
-                if (input.isBlank()) {
-                    Text(
-                        text = "输入今天的状态、计划或阻力",
-                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.65f),
-                        fontSize = 15.sp
+            BasicTextField(
+                value = input,
+                onValueChange = onInputChange,
+                modifier = Modifier.fillMaxWidth(),
+                textStyle = TextStyle(
+                    color = MaterialTheme.colorScheme.onSurface,
+                    fontSize = 15.sp,
+                    lineHeight = 20.sp
+                ),
+                cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+                minLines = 1,
+                maxLines = 5
+            )
+        }
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
+                IconButton(
+                    onClick = onPickImage,
+                    enabled = !loading
+                ) {
+                    Icon(
+                        painter = painterResource(LucideR.drawable.lucide_ic_image),
+                        contentDescription = "选择图片",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(20.dp)
                     )
                 }
-                BasicTextField(
-                    value = input,
-                    onValueChange = onInputChange,
-                    modifier = Modifier.fillMaxWidth(),
-                    textStyle = TextStyle(
-                        color = MaterialTheme.colorScheme.onSurface,
-                        fontSize = 15.sp,
-                        lineHeight = 20.sp
-                    ),
-                    cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
-                    minLines = 1,
-                    maxLines = 5
-                )
+                Box(
+                    modifier = Modifier
+                        .size(48.dp)
+                        .clip(CircleShape)
+                        .combinedClickable(
+                            enabled = !loading,
+                            onClick = onToggleInnerVoice,
+                            onLongClick = onEditInnerVoice
+                        ),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        painter = painterResource(LucideR.drawable.lucide_ic_heart),
+                        contentDescription = "心里话",
+                        tint = if (innerVoiceEnabled) activeColor else MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+                IconButton(
+                    onClick = onToggleCritical,
+                    enabled = !loading
+                ) {
+                    Icon(
+                        painter = painterResource(LucideR.drawable.lucide_ic_zap),
+                        contentDescription = "临界模式",
+                        tint = if (criticalMode) activeColor else MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+                IconButton(
+                    onClick = onToggleExperience,
+                    enabled = !loading
+                ) {
+                    Icon(
+                        painter = painterResource(LucideR.drawable.lucide_ic_book_open_check),
+                        contentDescription = "经验模式",
+                        tint = if (experienceMode) activeColor else MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
             }
             val canSend = !loading && (input.isNotBlank() || selectedImagePaths.isNotEmpty())
             Box(
@@ -739,15 +731,19 @@ private fun ProjectChatInputBar(
                     .size(38.dp)
                     .clip(RoundedCornerShape(8.dp))
                     .background(
-                        if (canSend) MaterialTheme.colorScheme.primary
+                        if (loading || canSend) MaterialTheme.colorScheme.primary
                         else MaterialTheme.colorScheme.outline.copy(alpha = 0.35f)
                     )
-                    .clickable(enabled = canSend) { onSend() },
+                    .clickable(enabled = loading || canSend) {
+                        if (loading) onStop() else onSend()
+                    },
                 contentAlignment = Alignment.Center
             ) {
                 Icon(
-                    painter = painterResource(LucideR.drawable.lucide_ic_send),
-                    contentDescription = "发送",
+                    painter = painterResource(
+                        if (loading) LucideR.drawable.lucide_ic_square else LucideR.drawable.lucide_ic_send
+                    ),
+                    contentDescription = if (loading) "停止" else "发送",
                     tint = MaterialTheme.colorScheme.onPrimary,
                     modifier = Modifier.size(18.dp)
                 )

@@ -416,9 +416,9 @@ private fun ViolationWarningBanner(violationCount: Int) {
         "已累计违规 $violationCount 次"
     }
     val body = if (punished) {
-        "所有项目已拦截消息发送。请捐款 5 元并把捐款截图发给 AI；每笔捐款只能抵扣 10 次违规，剩余违规继续保留。"
+        "所有项目已拦截消息发送。请捐款 3 元并把捐款截图发给 AI；每笔捐款只能抵扣 10 次违规，剩余违规继续保留。"
     } else {
-        "累计违规达到 10 次将触发惩罚：拦截所有项目消息发送。捐款 5 元并经 AI 确认后可抵扣 10 次违规，剩余违规继续保留。"
+        "累计违规达到 10 次将触发惩罚：拦截所有项目消息发送。捐款 3 元并经 AI 确认后可抵扣 10 次违规，剩余违规继续保留。"
     }
     Column(
         modifier = Modifier

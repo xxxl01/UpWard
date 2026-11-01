@@ -20,6 +20,14 @@ class ProjectRepository(
         projectDao.updateNextRequiredMessagePeriod(id, startTime, endTime)
     }
 
+    suspend fun saveInnerVoice(id: Long, content: String, enabled: Boolean) {
+        projectDao.updateInnerVoice(id, content, enabled)
+    }
+
+    suspend fun setInnerVoiceEnabled(id: Long, enabled: Boolean) {
+        projectDao.updateInnerVoiceEnabled(id, enabled)
+    }
+
     suspend fun saveProject(
         id: Long,
         name: String,

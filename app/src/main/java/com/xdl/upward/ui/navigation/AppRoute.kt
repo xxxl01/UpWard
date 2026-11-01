@@ -10,6 +10,12 @@ object AppRoute {
     const val CHALLENGE = "challenge/{projectId}"
     const val API_CONFIG_EDIT = "api_config_edit?apiId={apiId}"
     const val CONFIG_SETTINGS = "config_settings"
+    const val GENERAL_SETTINGS = "general_settings"
+    const val REMINDER_SETTINGS = "reminder_settings"
+    const val HOLIDAY_SETTINGS = "holiday_settings"
+    const val BACKUP_SETTINGS = "backup_settings"
+    const val PERMISSION_SETTINGS = "permission_settings"
+    const val API_SETTINGS = "api_settings"
     const val VIOLATION_CHAT = "violation_chat"
 
     fun projectEdit(projectId: Long = 0L): String = "project_edit?projectId=$projectId"

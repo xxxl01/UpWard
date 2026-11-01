@@ -36,6 +36,12 @@ interface ProjectDao {
     @Query("UPDATE project SET next_required_message_start_at = :startTime, next_required_message_end_at = :endTime, next_required_message_at = '' WHERE id = :id")
     suspend fun updateNextRequiredMessagePeriod(id: Long, startTime: String, endTime: String)
 
+    @Query("UPDATE project SET inner_voice = :content, inner_voice_enabled = :enabled WHERE id = :id")
+    suspend fun updateInnerVoice(id: Long, content: String, enabled: Boolean)
+
+    @Query("UPDATE project SET inner_voice_enabled = :enabled WHERE id = :id")
+    suspend fun updateInnerVoiceEnabled(id: Long, enabled: Boolean)
+
     @Query("DELETE FROM project WHERE id = :id")
     suspend fun deleteById(id: Long)
 

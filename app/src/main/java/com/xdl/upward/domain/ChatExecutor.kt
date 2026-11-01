@@ -3,16 +3,21 @@ package com.xdl.upward.domain
 import android.content.Context
 import com.xdl.upward.data.local.AiApiEntity
 import com.xdl.upward.data.local.AppDatabase
+import com.xdl.upward.data.local.ProjectEntity
 import com.xdl.upward.data.remote.AiApiService
 import com.xdl.upward.data.repository.AiApiRepository
 import com.xdl.upward.data.repository.ChallengeRepository
 import com.xdl.upward.data.repository.ConfigRepository
 import com.xdl.upward.data.repository.DailyRecordRepository
+import com.xdl.upward.data.repository.HolidayRepository
 import com.xdl.upward.data.repository.MessageRepository
 import com.xdl.upward.data.repository.ProjectRepository
 import com.xdl.upward.reminder.RequiredMessageReminderScheduler
+import com.xdl.upward.reminder.RequiredMessageDeadlineHandler
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -20,6 +25,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import org.json.JSONArray
 import org.json.JSONObject
+import java.time.DayOfWeek
 import java.time.LocalDate
 import java.time.OffsetDateTime
 
@@ -30,6 +36,7 @@ import java.time.OffsetDateTime
  */
 object ChatExecutor {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val WEEKDAYS = listOf("周一", "周二", "周三", "周四", "周五", "周六", "周日")
 
     data class ProjectChatState(
         val loading: Boolean = false,
@@ -38,6 +45,7 @@ object ChatExecutor {
     )
 
     private val projectStates = mutableMapOf<Long, MutableStateFlow<ProjectChatState>>()
+    private val chatJobs = mutableMapOf<Long, Job>()
 
     @Synchronized
     fun observeProjectChat(projectId: Long): StateFlow<ProjectChatState> =
@@ -64,11 +72,19 @@ object ChatExecutor {
         val challengeRepository = ChallengeRepository(database.challengeDao(), database.challengeCheckInDao())
         val aiApiService = AiApiService()
         val aiMessageBuilder = AiMessageBuilder()
+        val holidayRepository = HolidayRepository(database.holidayDao())
     }
 
     // 发送一条用户消息并流式接收 AI 回复，逻辑与页面是否存活无关。
-    fun sendUserMessage(context: Context, projectId: Long, content: String, imagePaths: List<String>) {
-        scope.launch {
+    fun sendUserMessage(
+        context: Context,
+        projectId: Long,
+        content: String,
+        imagePaths: List<String>,
+        criticalMode: Boolean = false,
+        experienceMode: Boolean = false
+    ) {
+        val job = scope.launch {
             val deps = ProjectChatDeps(context)
             var shouldRestoreRequiredTime = false
             var originalRequiredMessageStartAt = ""
@@ -76,13 +92,34 @@ object ChatExecutor {
             var sendCompleted = false
             try {
                 update(projectId) { it.copy(loading = true, aiThinking = false, errorMessage = "") }
-                val project = deps.repository.getProject(projectId)
-                if (project == null) {
+                if (deps.repository.getProject(projectId) == null) {
                     update(projectId) { it.copy(errorMessage = "项目不存在") }
                     return@launch
                 }
                 // 挑战缺卡自动检测：挑战期内有日期没打卡则进入失败惩罚流程（状态置为 failed）。
                 deps.challengeRepository.checkForMissedDays(projectId)
+
+                val finalCount = RequiredMessageDeadlineHandler.checkAndRecord(deps.appContext, projectId)
+                if (finalCount != null) {
+                    update(projectId) {
+                        it.copy(
+                            errorMessage = if (finalCount >= 10) {
+                                "已错过指定回复时间，违规累计已达到惩罚线：需捐款 3 元并把截图发给违规告诫页的 AI，每笔捐款只能抵扣 10 次违规。"
+                            } else {
+                                "已错过指定回复时间，已记为违规 $finalCount/10。"
+                            }
+                        )
+                    }
+                }
+                val violationCount = finalCount
+                    ?: (deps.configRepository.getValue("violation_count")?.toIntOrNull() ?: 0)
+                if (violationCount >= 10) {
+                    update(projectId) {
+                        it.copy(errorMessage = "你已累计违规 $violationCount 次，处于惩罚状态，消息发送已被拦截。请到“违规告诫”页捐款 3 元并截图给 AI；每笔捐款只能抵扣 10 次违规。")
+                    }
+                    return@launch
+                }
+                val project = deps.repository.getProject(projectId) ?: return@launch
 
                 var nextRequiredMessageStartAt = project.nextRequiredMessageStartAt
                 var nextRequiredMessageEndAt = project.nextRequiredMessageEndAt
@@ -103,27 +140,7 @@ object ChatExecutor {
                         RequiredMessageReminderScheduler.cancel(deps.appContext, projectId)
                         nextRequiredMessageStartAt = ""
                         nextRequiredMessageEndAt = ""
-                    } else if (!now.isBefore(endTime.plusMinutes(1))) {
-                        // 违规次数持续累加；达到 10 次后进入惩罚状态，每笔捐款由告诫页 AI 确认后抵扣 10 次
-                        val currentCount = deps.configRepository.getValue("violation_count")?.toIntOrNull() ?: 0
-                        val nextStartAt = OffsetDateTime.now()
-                        val nextEndAt = nextStartAt.plusMinutes(25)
-                        deps.repository.setNextRequiredMessagePeriod(projectId, nextStartAt.toString(), nextEndAt.toString())
-                        RequiredMessageReminderScheduler.schedule(deps.appContext, projectId, nextStartAt.toString(), nextEndAt.toString())
-                        nextRequiredMessageStartAt = nextStartAt.toString()
-                        nextRequiredMessageEndAt = nextEndAt.toString()
-                        val finalCount = currentCount + 1
-                        deps.configRepository.setValue("violation_count", finalCount.toString())
-                        update(projectId) {
-                            it.copy(
-                                errorMessage = if (finalCount >= 10) {
-                                    "已错过指定回复时间，违规累计已达到惩罚线：需捐款 5 元并把截图发给违规告诫页的 AI，每笔捐款只能抵扣 10 次违规。"
-                                } else {
-                                    "已错过指定回复时间，已记为违规 $finalCount/10。"
-                                }
-                            )
-                        }
-                    } else if (!now.isBefore(startTime)) {
+                    } else if (!now.isBefore(startTime) && now.isBefore(endTime)) {
                         shouldRestoreRequiredTime = true
                         originalRequiredMessageStartAt = project.nextRequiredMessageStartAt
                         originalRequiredMessageEndAt = project.nextRequiredMessageEndAt
@@ -152,7 +169,7 @@ object ChatExecutor {
                 val nextRequiredTimeRule = if (nextRequiredMessageEndAt.isBlank()) {
                     "当前没有已指定的下一次汇报时间。"
                 } else {
-                    "当前已指定的下一次汇报时间：$nextRequiredMessageStartAt 到 $nextRequiredMessageEndAt。如果要修改，只允许提前：新的 start_at 必须早于当前 start_at，且新时间段长度不能超过当前时间段长度，不能延后。"
+                    "当前已指定的下一次汇报时间：$nextRequiredMessageStartAt 到 $nextRequiredMessageEndAt。如果要修改，可以提前，也可以延后；新的 start_at 不能早于当前时间。"
                 }
                 val requestMessages = deps.aiMessageBuilder.buildChatMessages(project, dailyRecords, recentMessages).toMutableList()
                 if (requestMessages.isNotEmpty()) {
@@ -161,23 +178,26 @@ object ChatExecutor {
                         content = systemMessage.content + """
 
                         当前项目 id：$projectId。
-                        当前时间：${OffsetDateTime.now()}。
+                        当前时间：${describeNow(deps)}。
                         $nextRequiredTimeRule
 
                         你可以强制指定用户下一次汇报时间。这个工具适合在用户状态不佳、拖延风险高、需要被你推一把时使用：如果你认为某个时间段用户需要向你汇报进展，你就可以指定用户必须在这个时间段内给你发消息，从而让用户被你“推”到。
-                        如果用户在你指定的时间段内没有给你发消息，会算作一次违规；违规累计达到 10 次会触发惩罚：用户在所有项目里发消息都会被拦截，必须到“违规告诫”页，在任意慈善平台捐款 5 元并把捐款截图发给 AI；每笔捐款只能抵扣 10 次违规，剩余违规继续保留。
+                        如果用户在你指定的时间段内没有给你发消息，会算作一次违规；违规累计达到 10 次会触发惩罚：用户在所有项目里发消息都会被拦截，必须到“违规告诫”页，在任意慈善平台捐款 3 元并把捐款截图发给 AI；每笔捐款只能抵扣 10 次违规，剩余违规继续保留。
                         如果你决定强制指定下一次汇报时间，请在回复末尾额外输出一个本地工具调用块。工具调用块必须严格使用下面格式，不能放在代码块里：
                          <tool_call>{"name":"set_next_resume_time","arguments":{"start_at":"ISO-8601 时间"}}</tool_call>
-                         工具规则：AI 只能填写 start_at，系统会把结束时间固定为开始时间之后 25 分钟，AI 提供的 end_at 会被忽略。start_at 不能早于当前时间；已有汇报时间时，只允许提前，新的开始时间必须更早。只在确实要安排恢复窗口时调用一次；窗口结束且用户未回复时会记一次违规，并立即以当时当前时间为新的开始时间顺延 25 分钟。自然语言回复中不要解释工具 JSON。
+                         工具规则：AI 只能填写 start_at，系统会把结束时间固定为开始时间之后 25 分钟，AI 提供的 end_at 会被忽略。start_at 不能早于当前时间；已有汇报时间时，既可以提前，也可以延后。只在确实要安排恢复窗口时调用一次；窗口结束且用户未回复时会记一次违规并清除窗口，不会自动开启新窗口。自然语言回复中不要解释工具 JSON。
                         """.trimIndent()
                     )
                 }
                 buildChallengeSystemMessage(deps, projectId)?.let { challengeMessage ->
                     requestMessages.add(challengeMessage)
                 }
+                appendCriticalPrompt(requestMessages, criticalMode)
+                appendExperiencePrompt(requestMessages, experienceMode)
                 if (imagePaths.isNotEmpty()) {
                     bindImagesToLastUserMessage(deps, projectId, api, requestMessages, imagePaths)
                 }
+                appendInnerVoicePrompt(requestMessages, project)
 
                 var assistantMessageId = 0L
                 val reply = StringBuilder()
@@ -219,6 +239,8 @@ object ChatExecutor {
                     throw IllegalStateException("AI 回复为空")
                 }
                 sendCompleted = true
+            } catch (e: CancellationException) {
+                // 用户点击停止时保留已经收到的流式内容，不提示为错误。
             } catch (e: Exception) {
                 if (shouldRestoreRequiredTime && !sendCompleted) {
                     deps.repository.setNextRequiredMessagePeriod(projectId, originalRequiredMessageStartAt, originalRequiredMessageEndAt)
@@ -229,11 +251,26 @@ object ChatExecutor {
                 update(projectId) { it.copy(loading = false, aiThinking = false) }
             }
         }
+        synchronized(chatJobs) {
+            chatJobs[projectId]?.cancel()
+            chatJobs[projectId] = job
+            job.invokeOnCompletion {
+                synchronized(chatJobs) {
+                    if (chatJobs[projectId] === job) chatJobs.remove(projectId)
+                }
+            }
+        }
+    }
+
+    fun stop(projectId: Long) {
+        synchronized(chatJobs) {
+            chatJobs[projectId]?.cancel()
+        }
     }
 
     // 用当前最后一条消息重新请求 AI，不重复追加这条消息。
     fun resendLastMessage(context: Context, projectId: Long, messageId: Long) {
-        scope.launch {
+        val job = scope.launch {
             val deps = ProjectChatDeps(context)
             try {
                 update(projectId) { it.copy(loading = true, aiThinking = false, errorMessage = "") }
@@ -263,7 +300,7 @@ object ChatExecutor {
                 val nextRequiredTimeRule = if (project.nextRequiredMessageEndAt.isBlank()) {
                     "当前没有已指定的下一次汇报时间。"
                 } else {
-                    "当前已指定的下一次汇报时间：${project.nextRequiredMessageStartAt} 到 ${project.nextRequiredMessageEndAt}。如果要修改，只允许提前：新的 start_at 必须早于当前 start_at，且新时间段长度不能超过当前时间段长度，不能延后。"
+                    "当前已指定的下一次汇报时间：${project.nextRequiredMessageStartAt} 到 ${project.nextRequiredMessageEndAt}。如果要修改，可以提前，也可以延后；新的 start_at 不能早于当前时间。"
                 }
                 val requestMessages = deps.aiMessageBuilder.buildChatMessages(project, dailyRecords, recentMessages).toMutableList()
                 if (requestMessages.isNotEmpty()) {
@@ -272,14 +309,14 @@ object ChatExecutor {
                         content = systemMessage.content + """
 
                         当前项目 id：$projectId。
-                        当前时间：${OffsetDateTime.now()}。
+                        当前时间：${describeNow(deps)}。
                         $nextRequiredTimeRule
 
                         你可以强制指定用户下一次汇报时间。这个工具适合在用户状态不佳、拖延风险高、需要被你推一把时使用：如果你认为某个时间段用户需要向你汇报进展，你就可以指定用户必须在这个时间段内给你发消息，从而让用户被你“推”到。
-                        如果用户在你指定的时间段内没有给你发消息，会算作一次违规；违规累计达到 10 次会触发惩罚：用户在所有项目里发消息都会被拦截，必须到“违规告诫”页，在任意慈善平台捐款 5 元并把捐款截图发给 AI；每笔捐款只能抵扣 10 次违规，剩余违规继续保留。
+                        如果用户在你指定的时间段内没有给你发消息，会算作一次违规；违规累计达到 10 次会触发惩罚：用户在所有项目里发消息都会被拦截，必须到“违规告诫”页，在任意慈善平台捐款 3 元并把捐款截图发给 AI；每笔捐款只能抵扣 10 次违规，剩余违规继续保留。
                         如果你决定强制指定下一次汇报时间，请在回复末尾额外输出一个本地工具调用块。工具调用块必须严格使用下面格式，不能放在代码块里：
                          <tool_call>{"name":"set_next_resume_time","arguments":{"start_at":"ISO-8601 时间"}}</tool_call>
-                         工具规则：AI 只能填写 start_at，系统会把结束时间固定为开始时间之后 25 分钟，AI 提供的 end_at 会被忽略。start_at 不能早于当前时间；已有汇报时间时，只允许提前，新的开始时间必须更早。只在确实要安排恢复窗口时调用一次；窗口结束且用户未回复时会记一次违规，并立即以当时当前时间为新的开始时间顺延 25 分钟。自然语言回复中不要解释工具 JSON。
+                         工具规则：AI 只能填写 start_at，系统会把结束时间固定为开始时间之后 25 分钟，AI 提供的 end_at 会被忽略。start_at 不能早于当前时间；已有汇报时间时，既可以提前，也可以延后。只在确实要安排恢复窗口时调用一次；窗口结束且用户未回复时会记一次违规并清除窗口，不会自动开启新窗口。自然语言回复中不要解释工具 JSON。
                         """.trimIndent()
                     )
                 }
@@ -302,6 +339,7 @@ object ChatExecutor {
                         bindImagesToLastUserMessage(deps, projectId, api, requestMessages, imagePaths)
                     }
                 }
+                appendInnerVoicePrompt(requestMessages, project)
 
                 var assistantMessageId = 0L
                 val reply = StringBuilder()
@@ -339,11 +377,96 @@ object ChatExecutor {
                 } else if (visibleReply.isNotEmpty()) {
                     deps.messageRepository.addAssistantMessage(projectId, visibleReply)
                 }
+            } catch (e: CancellationException) {
+                // 用户点击停止时保留已经收到的流式内容，不提示为错误。
             } catch (e: Exception) {
                 update(projectId) { it.copy(errorMessage = e.message ?: "AI 请求失败") }
             } finally {
                 update(projectId) { it.copy(loading = false, aiThinking = false) }
             }
+        }
+        synchronized(chatJobs) {
+            chatJobs[projectId]?.cancel()
+            chatJobs[projectId] = job
+            job.invokeOnCompletion {
+                synchronized(chatJobs) {
+                    if (chatJobs[projectId] === job) chatJobs.remove(projectId)
+                }
+            }
+        }
+    }
+
+    // 项目开启“心里话”时，把该项目的心里话连同提示词拼接到最后一条 user 消息里一起发给 AI。
+    private fun appendInnerVoicePrompt(requestMessages: MutableList<AiChatMessage>, project: ProjectEntity) {
+        if (!project.innerVoiceEnabled) return
+        val innerVoice = project.innerVoice.trim()
+        if (innerVoice.isEmpty()) return
+        val index = requestMessages.indexOfLast { it.role == "user" }
+        if (index < 0) return
+        val prefix = """
+            以下是用户的一句“心里话”，或者说是内心活动。用户由于内心的别扭，或者不愿意离开舒适区的惯性，处于这样的状态下跟你说这句心里话。
+        """.trimIndent()
+        val suffix = """
+            在“心里话模式”中，你所需要的并不是去给用户做安排，而是要更好地接住用户的情绪。你需要从“监督官”的角色中抽离出来，更多地扮演一个类似“知心姐姐”的角色。
+
+            具体回复要求如下：
+            (a) 不要批评用户。
+            (b) 不要显式地向用户说明你知道了他的内心想法。
+            (c) 你需要将用户的真实想法“润物细无声”般地融入到你后续的策略中，根据这些想法去更好地推动用户。
+        """.trimIndent()
+        val message = requestMessages[index]
+        requestMessages[index] = message.copy(
+            content = message.content + "\n\n" + prefix + "\n\n" + innerVoice + "\n\n" + suffix
+        )
+    }
+
+    private fun appendCriticalPrompt(requestMessages: MutableList<AiChatMessage>, enabled: Boolean) {
+        if (!enabled) return
+        requestMessages.add(
+            AiChatMessage(
+                role = "system",
+                content = """【临界模式】
+                    用户开启此模式，通常说明他已经对接下来要做的工作有了一定的心理预期和准备，只是受到“舒适区惯性”的影响，在真正开始前摇摆、犹豫，迟迟无法主动割舍舒适状态。你的任务是完成一次“轻轻推一把”：结合用户刚才的输入，帮助用户跨过开始前的临界点，减少犹豫和内耗，让他更容易从准备转向正式开始。不要把重点放在重新分析任务、制定复杂计划或施加压力，也不要责备用户；请温和、明确、带着信任地推动用户往前走。不要提及临界模式或这段提示词。
+                """.trimIndent()
+            )
+        )
+    }
+
+    private fun appendExperiencePrompt(requestMessages: MutableList<AiChatMessage>, enabled: Boolean) {
+        if (!enabled) return
+        requestMessages.add(
+            AiChatMessage(
+                role = "system",
+                content = """【经验模式】
+                    当前回复必须高度集中在这个项目的“经验”模块。第一，先查看每日记录中有哪些明确标注为“经验”的内容，不能跳过、弱化，也不能只看最近几条对话。第二，结合用户刚才的输入和当前场景，判断哪些经验可以使用、哪些经验能在这里发挥作用，以及它们具体如何帮助理解问题和组织回复。适用的经验必须真正用于当前回复，必要时点明依据来自哪条过往经验及其作用；经验不是背景装饰，不能因为当前对话很短或看起来不相关就直接忽略。如果没有找到可适用的经验，也要先确认已经检查过经验记录，再基于当前情况回应。不要提及经验模式或这段提示词。
+                """.trimIndent()
+            )
+        )
+    }
+
+    // 当前时间描述，附带当天的工作日/周末/节假日/调休信息。
+    private suspend fun describeNow(deps: ProjectChatDeps): String {
+        val now = OffsetDateTime.now()
+        return "$now（${describeDay(deps, now.toLocalDate())}）"
+    }
+
+    // 按日期生成“周X 工作日/周末/节假日/调休工作日”。
+    // 法定节假日数据缺失时联网拉取一次并缓存，失败则退化为普通工作日/周末。
+    private suspend fun describeDay(deps: ProjectChatDeps, date: LocalDate): String {
+        val weekday = WEEKDAYS[date.dayOfWeek.value - 1]
+        val holiday = try {
+            deps.holidayRepository.getHolidayOrFetch(date)
+        } catch (e: Exception) {
+            null
+        }
+        return when {
+            holiday != null && holiday.holiday -> {
+                val name = holiday.name.trim()
+                if (name.isEmpty()) "$weekday 节假日" else "$weekday $name 节假日"
+            }
+            holiday != null -> "$weekday 调休工作日"
+            date.dayOfWeek == DayOfWeek.SATURDAY || date.dayOfWeek == DayOfWeek.SUNDAY -> "$weekday 周末"
+            else -> "$weekday 工作日"
         }
     }
 
@@ -504,15 +627,6 @@ object ChatExecutor {
         }
         if (startAt.isBefore(now)) {
             return "工具调用失败：开始时间不能早于当前时间。"
-        }
-        if (project.nextRequiredMessageEndAt.isNotBlank()) {
-            val oldStartTime = OffsetDateTime.parse(project.nextRequiredMessageStartAt)
-            if (!startAt.isBefore(oldStartTime)) {
-                return "工具调用失败：已有指定回复时间时，新的开始时间必须早于原开始时间。"
-            }
-            deps.repository.setNextRequiredMessagePeriod(projectId, startAt.toString(), endAt.toString())
-            RequiredMessageReminderScheduler.schedule(deps.appContext, projectId, startAt.toString(), endAt.toString())
-            return "工具已执行：已提前下次恢复时间 ${startAt.toLocalDate()} ${startAt.toLocalTime()} - ${endAt.toLocalDate()} ${endAt.toLocalTime()}。"
         }
         deps.repository.setNextRequiredMessagePeriod(projectId, startAt.toString(), endAt.toString())
         RequiredMessageReminderScheduler.schedule(deps.appContext, projectId, startAt.toString(), endAt.toString())
