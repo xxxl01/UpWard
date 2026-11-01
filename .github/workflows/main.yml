@@ -45,6 +45,6 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          cp app/build/outputs/apk/release/app-release.apk "XLedger-${{ inputs.tag }}.apk"
-          gh release create "${{ inputs.tag }}" "XLedger-${{ inputs.tag }}.apk" \
+          cp app/build/outputs/apk/release/app-release.apk "UpWard-${{ inputs.tag }}.apk"
+          gh release create "${{ inputs.tag }}" "UpWard-${{ inputs.tag }}.apk" \
             --title "${{ inputs.tag }}" --generate-notes
