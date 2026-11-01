@@ -273,16 +273,16 @@ class ViolationChatViewModel(application: Application) : AndroidViewModel(applic
 
                 val systemPrompt = """
                     你是用户自律项目的监督者。
-                    违规定义：三时段项目要求昨天 4:00-13:00、13:00-19:30、19:30-今天 4:00 三个时间段内分别至少有一条 user 打卡消息；每日一次项目要求昨天 4:00 到今天 4:00 之间至少有一条 user 打卡消息。任一项目按自身打卡模式缺失要求，就记为一次违规。违规累计达到 10 次会触发惩罚：用户在项目里发消息会被拦截；违规次数仍会继续累加，之后每笔 3 元捐款只能抵扣 10 次违规。
+                    违规定义：三时段项目要求昨天 4:00-13:00、13:00-19:30、19:30-今天 4:00 三个时间段内分别至少有一条 user 打卡消息；每日一次项目要求昨天 4:00 到今天 4:00 之间至少有一条 user 打卡消息。任一项目按自身打卡模式缺失要求，就记为一次违规。违规累计达到 10 次会触发惩罚：用户在项目里发消息会被拦截；违规次数仍会继续累加，之后每笔 4 元捐款只能抵扣 10 次违规。
                     项目昨天处于挑战期时以挑战打卡为准，不适用上面的普通打卡模式要求：挑战当天完成打卡即视为达标；挑战缺卡只判定挑战失败并进入失败惩罚，不计入违规次数。
                     当前违规次数：${_violationCount.value} 次。
 
                     惩罚与重置规则：
                     1. 累计违规达到 10 次后，用户在任意项目发送消息都会被拦截，无法继续打卡；之后违规次数仍会继续累加。
-                    2. 解除方式：用户需在任意慈善平台捐款 3 元，并把捐款截图以图片形式发给你审核；每笔捐款只能抵扣 10 次违规。
-                    3. 你审核截图，确认用户确实完成了一笔金额不低于 3 元的慈善捐款后，请在回复末尾额外输出一个本地工具调用块，把违规次数减少 10 次。若抵扣后仍达到 10 次，项目消息继续拦截；只有降到 10 次以下才解除惩罚。工具调用块必须严格使用下面格式，不能放在代码块里：
+                    2. 解除方式：用户需在任意慈善平台捐款 4 元，并把捐款截图以图片形式发给你审核；每笔捐款只能抵扣 10 次违规。
+                    3. 你审核截图，确认用户确实完成了一笔金额不低于 4 元的慈善捐款后，请在回复末尾额外输出一个本地工具调用块，把违规次数减少 10 次。若抵扣后仍达到 10 次，项目消息继续拦截；只有降到 10 次以下才解除惩罚。工具调用块必须严格使用下面格式，不能放在代码块里：
                     <tool_call>{"name":"reset_violation_count","arguments":{"summary":"简要说明审核依据"}}</tool_call>
-                    工具规则：只有当前违规次数达到 10 次且用户确实完成捐款（截图金额 ≥ 3 元）后才能调用；未达到 10 次时禁止调用，只进行告诫；每次调用只抵扣 10 次，不能一次性全部清零；自然语言回复中不要解释工具 JSON。
+                    工具规则：只有当前违规次数达到 10 次且用户确实完成捐款（截图金额 ≥ 4 元）后才能调用；未达到 10 次时禁止调用，只进行告诫；每次调用只抵扣 10 次，不能一次性全部清零；调用时本地还会自动把用户当前所有“挑战失败惩罚”一并结算，捐款即视为已完成惩罚，之后不要再要求用户重复完成挑战惩罚；自然语言回复中不要解释工具 JSON。
 
                     当前项目和每日记录：
                     $projectContext
@@ -420,7 +420,7 @@ class ViolationChatViewModel(application: Application) : AndroidViewModel(applic
         return result
     }
 
-    // 执行“抵扣违规次数”工具：AI 确认用户完成捐款（金额 ≥ 3 元）后调用，每次抵扣 10 次。
+    // 执行“抵扣违规次数”工具：AI 确认用户完成捐款（金额 ≥ 4 元）后调用，每次抵扣 10 次。
     private suspend fun executeResetViolationCount(): String {
         val currentCount = _violationCount.value
         if (currentCount < 10) {
@@ -429,10 +429,13 @@ class ViolationChatViewModel(application: Application) : AndroidViewModel(applic
         val remainingCount = currentCount - 10
         configRepository.setValue("violation_count", remainingCount.toString())
         _violationCount.value = remainingCount
+        // 捐款即视为完成惩罚：同时结算所有失败惩罚中的挑战，不再重复惩罚
+        val settledChallenges = challengeRepository.settleAllFailed()
+        val challengeNote = if (settledChallenges > 0) "，并已同步结算 $settledChallenges 个挑战失败惩罚" else ""
         return if (remainingCount >= 10) {
-            "工具已执行：已确认捐款完成，违规次数抵扣 10 次，剩余违规 $remainingCount 次，项目消息仍处于拦截状态；每笔捐款只能再抵扣 10 次。"
+            "工具已执行：已确认捐款完成，违规次数抵扣 10 次$challengeNote，剩余违规 $remainingCount 次，项目消息仍处于拦截状态；每笔捐款只能再抵扣 10 次。"
         } else {
-            "工具已执行：已确认捐款完成，违规次数抵扣 10 次，剩余违规 $remainingCount 次，惩罚已解除，你可以在项目里正常发送消息了。"
+            "工具已执行：已确认捐款完成，违规次数抵扣 10 次$challengeNote，剩余违规 $remainingCount 次，惩罚已解除，你可以在项目里正常发送消息了。"
         }
     }
 }

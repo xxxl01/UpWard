@@ -202,6 +202,14 @@ class ChallengeRepository(
         challengeDao.updateStatus(challengeId, STATUS_SETTLED, OffsetDateTime.now().toString())
     }
 
+    // 捐款结算违规时一并结算：所有处于失败惩罚中（failed）的挑战直接置为 settled，不再重复惩罚。返回结算数量。
+    suspend fun settleAllFailed(): Int {
+        val failed = challengeDao.getFailed()
+        val now = OffsetDateTime.now().toString()
+        failed.forEach { challengeDao.updateStatus(it.id, STATUS_SETTLED, now) }
+        return failed.size
+    }
+
     // 缺卡检测：active 挑战若在 start ~ (今天-1, 且不超过 end) 之间有任意一天没打卡，立即置为 failed 并返回 true。
     suspend fun checkForMissedDays(projectId: Long): Boolean {
         val challenge = challengeDao.getByProjectId(projectId) ?: return false

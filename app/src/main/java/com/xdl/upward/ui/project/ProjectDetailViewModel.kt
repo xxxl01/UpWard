@@ -178,7 +178,7 @@ class ProjectDetailViewModel(application: Application) : AndroidViewModel(applic
             val finalCount = RequiredMessageDeadlineHandler.checkAndRecord(getApplication(), projectId)
                 ?: return@launch
             _errorMessage.value = if (finalCount >= 10) {
-                "已错过指定回复时间，违规累计已达到惩罚线：需捐款 3 元并把截图发给违规告诫页的 AI，每笔捐款只能抵扣 10 次违规。"
+                "已错过指定回复时间，违规累计已达到惩罚线：需捐款 4 元并把截图发给违规告诫页的 AI，每笔捐款只能抵扣 10 次违规。"
             } else {
                 "已错过指定回复时间，已记为违规 $finalCount/10。"
             }
@@ -200,7 +200,7 @@ class ProjectDetailViewModel(application: Application) : AndroidViewModel(applic
         if (_violationCount.value >= 10) {
             _input.value = ""
             _selectedImagePaths.value = emptyList()
-            _errorMessage.value = "你已累计违规 ${_violationCount.value} 次，处于惩罚状态，消息发送已被拦截。请到项目列表页的“违规告诫”入口捐款 3 元，把捐款截图发给 AI；每笔捐款只能抵扣 10 次违规。"
+            _errorMessage.value = "你已累计违规 ${_violationCount.value} 次，处于惩罚状态，消息发送已被拦截。请到项目列表页的“违规告诫”入口捐款 4 元，把捐款截图发给 AI；每笔捐款只能抵扣 10 次违规。"
             return
         }
 
@@ -238,7 +238,7 @@ class ProjectDetailViewModel(application: Application) : AndroidViewModel(applic
 
         // 惩罚状态同样拦截重发
         if (_violationCount.value >= 10) {
-            _errorMessage.value = "你已累计违规 ${_violationCount.value} 次，处于惩罚状态，消息发送已被拦截。请到“违规告诫”页捐款 3 元并截图给 AI；每笔捐款只能抵扣 10 次违规。"
+            _errorMessage.value = "你已累计违规 ${_violationCount.value} 次，处于惩罚状态，消息发送已被拦截。请到“违规告诫”页捐款 4 元并截图给 AI；每笔捐款只能抵扣 10 次违规。"
             return
         }
 
