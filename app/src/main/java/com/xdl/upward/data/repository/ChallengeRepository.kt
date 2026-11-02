@@ -203,7 +203,12 @@ class ChallengeRepository(
     }
 
     // 捐款结算违规时一并结算：所有处于失败惩罚中（failed）的挑战直接置为 settled，不再重复惩罚。返回结算数量。
+    // 缺卡判定是懒执行的（进入项目页才检测），结算前先对所有进行中的挑战补做一次缺卡检测，
+    // 否则已缺卡但还没被打开过的项目仍是 active，会漏结算，之后一打开又变成“惩罚中”。
     suspend fun settleAllFailed(): Int {
+        challengeDao.getAllForBackup()
+            .filter { it.status == STATUS_ACTIVE }
+            .forEach { checkForMissedDays(it.projectId) }
         val failed = challengeDao.getFailed()
         val now = OffsetDateTime.now().toString()
         failed.forEach { challengeDao.updateStatus(it.id, STATUS_SETTLED, now) }

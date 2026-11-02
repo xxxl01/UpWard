@@ -353,8 +353,8 @@ class ProjectListViewModel(application: Application) : AndroidViewModel(applicat
                 }
                 val hasDailyMessage = messageRepository.hasUserMessagesBetween(project.id, dailyStart, todayStart)
                 if (!hasDailyMessage) {
+                    // 不能 break：后面项目的挑战缺卡也要在这里判定失败，违规次数在循环后只加一次
                     hasViolationProject = true
-                    break
                 }
             } else {
                 val shouldCheckMorning = !projectCreatedAt.isAfter(morningStartTime)
@@ -371,7 +371,6 @@ class ProjectListViewModel(application: Application) : AndroidViewModel(applicat
                     (shouldCheckEvening && !hasEveningMessage)
                 ) {
                     hasViolationProject = true
-                    break
                 }
             }
         }
