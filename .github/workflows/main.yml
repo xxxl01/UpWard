@@ -39,7 +39,11 @@ jobs:
       - name: Build release APK
         run: |
           chmod +x gradlew
-          ./gradlew assembleRelease --no-daemon
+          # versionName 跟随发版 tag（去掉开头的 v），versionCode 用自增的 run_number，保证每次发版递增
+          VERSION_NAME="${{ inputs.tag }}"
+          ./gradlew assembleRelease --no-daemon \
+            -PappVersionName="${VERSION_NAME#v}" \
+            -PappVersionCode="$(( ${{ github.run_number }} + 2 ))"
 
       - name: Create release
         env:

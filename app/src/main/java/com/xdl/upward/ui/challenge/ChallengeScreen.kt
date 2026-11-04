@@ -87,6 +87,7 @@ fun ChallengeScreen(
     }
     val startDate by viewModel.startDate.collectAsStateWithLifecycle()
     val endDate by viewModel.endDate.collectAsStateWithLifecycle()
+    val transitionEndDate by viewModel.transitionEndDate.collectAsStateWithLifecycle()
     val errorMessage by viewModel.errorMessage.collectAsStateWithLifecycle()
     val noticeMessage by viewModel.noticeMessage.collectAsStateWithLifecycle()
     val aiJudging by viewModel.aiJudging.collectAsStateWithLifecycle()
@@ -100,6 +101,7 @@ fun ChallengeScreen(
 
     var showStartDatePicker by remember { mutableStateOf(false) }
     var showEndDatePicker by remember { mutableStateOf(false) }
+    var showTransitionDatePicker by remember { mutableStateOf(false) }
     var confirmSettleVisible by remember { mutableStateOf(false) }
     var confirmManualFailVisible by remember { mutableStateOf(false) }
     // 修改进行中的挑战（active，含开始日期未到的 pending）：编辑表单按修改模式展示。
@@ -156,11 +158,20 @@ fun ChallengeScreen(
                     isModifyMode = isModifyMode,
                     oldStartDate = challenge?.startDate.orEmpty(),
                     oldEndDate = challenge?.endDate.orEmpty(),
+                    transitionEndDate = transitionEndDate,
                     aiJudging = aiJudging,
                     onGoalChange = viewModel::updateGoal,
                     onDailyStandardPromptChange = viewModel::updateDailyStandardPrompt,
                     onPickStartDate = { showStartDatePicker = true },
                     onPickEndDate = { showEndDatePicker = true },
+                    onPickTransitionDate = {
+                        if (startDate.isBlank() || endDate.isBlank()) {
+                            viewModel.showError("请先选择开始日期和截止日期")
+                        } else {
+                            showTransitionDatePicker = true
+                        }
+                    },
+                    onClearTransitionDate = viewModel::clearTransitionEndDate,
                     onSave = { viewModel.save(projectId) },
                     onCancel = viewModel::cancelEditing
                 )
@@ -211,6 +222,19 @@ fun ChallengeScreen(
             } else null,
             onDismiss = { showEndDatePicker = false },
             onConfirm = viewModel::updateEndDate
+        )
+    }
+
+    if (showTransitionDatePicker) {
+        // 过渡期只能落在开始日期（含）到截止日期前一天（含）之间。
+        val start = runCatching { LocalDate.parse(startDate) }.getOrNull()
+        val end = runCatching { LocalDate.parse(endDate) }.getOrNull()
+        ChallengeDatePickerDialog(
+            initialDate = transitionEndDate.ifBlank { startDate },
+            minDateMillis = start?.atStartOfDay(ZoneOffset.UTC)?.toInstant()?.toEpochMilli(),
+            maxDateMillis = end?.minusDays(1)?.atStartOfDay(ZoneOffset.UTC)?.toInstant()?.toEpochMilli(),
+            onDismiss = { showTransitionDatePicker = false },
+            onConfirm = viewModel::updateTransitionEndDate
         )
     }
 
@@ -277,20 +301,24 @@ fun ChallengeScreen(
 private fun ChallengeDatePickerDialog(
     initialDate: String,
     minDateMillis: Long? = null,
+    maxDateMillis: Long? = null,
     onDismiss: () -> Unit,
     onConfirm: (String) -> Unit
 ) {
     val initialMillis = runCatching {
         LocalDate.parse(initialDate).atStartOfDay(ZoneOffset.UTC).toInstant().toEpochMilli()
     }.getOrDefault(System.currentTimeMillis())
-    // minDateMillis 不为空时，只允许选择该日期当天及之后（用于修改模式下截止日期只能延后）。
-    val datePickerState = if (minDateMillis == null) {
+    // minDateMillis / maxDateMillis 不为空时限制可选范围（含边界）：
+    // 修改模式下截止日期只能延后；过渡期只能在开始日期到截止日期前一天之间。
+    val datePickerState = if (minDateMillis == null && maxDateMillis == null) {
         rememberDatePickerState(initialSelectedDateMillis = initialMillis)
     } else {
         rememberDatePickerState(
             initialSelectedDateMillis = initialMillis,
             selectableDates = object : SelectableDates {
-                override fun isSelectableDate(utcTimeMillis: Long): Boolean = utcTimeMillis >= minDateMillis
+                override fun isSelectableDate(utcTimeMillis: Long): Boolean =
+                    (minDateMillis == null || utcTimeMillis >= minDateMillis) &&
+                        (maxDateMillis == null || utcTimeMillis <= maxDateMillis)
             }
         )
     }
@@ -372,11 +400,14 @@ private fun ChallengeEditForm(
     isModifyMode: Boolean,
     oldStartDate: String,
     oldEndDate: String,
+    transitionEndDate: String,
     aiJudging: Boolean,
     onGoalChange: (String) -> Unit,
     onDailyStandardPromptChange: (String) -> Unit,
     onPickStartDate: () -> Unit,
     onPickEndDate: () -> Unit,
+    onPickTransitionDate: () -> Unit,
+    onClearTransitionDate: () -> Unit,
     onSave: () -> Unit,
     onCancel: () -> Unit
 ) {
@@ -536,6 +567,54 @@ private fun ChallengeEditForm(
             modifier = Modifier.size(20.dp)
         )
     }
+    Spacer(modifier = Modifier.height(12.dp))
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .clickable { onPickTransitionDate() }
+            .padding(horizontal = 14.dp, vertical = 14.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = "过渡期（可选）",
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.Medium
+            )
+            Spacer(modifier = Modifier.height(2.dp))
+            Text(
+                text = if (transitionEndDate.isBlank()) {
+                    "不设过渡期；可选择过渡期截止日期（含当天）"
+                } else {
+                    val formatted = LocalDate.parse(transitionEndDate).format(DateTimeFormatter.ofPattern("yyyy年MM月dd日"))
+                    "开始日期 ~ $formatted（含当天）"
+                },
+                color = if (transitionEndDate.isBlank()) MaterialTheme.colorScheme.onSurfaceVariant
+                else MaterialTheme.colorScheme.onSurface,
+                style = MaterialTheme.typography.bodyMedium
+            )
+            if (isModifyMode) {
+                Text(
+                    text = "挑战开始后过渡期只能提前结束或取消",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = MaterialTheme.typography.bodySmall
+                )
+            }
+        }
+        if (transitionEndDate.isNotBlank()) {
+            TextButton(onClick = onClearTransitionDate) {
+                Text("清除")
+            }
+        } else {
+            Icon(
+                painter = painterResource(LucideR.drawable.lucide_ic_calendar),
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(20.dp)
+            )
+        }
+    }
     Spacer(modifier = Modifier.height(16.dp))
     Row(
         modifier = Modifier.fillMaxWidth(),
@@ -671,6 +750,16 @@ private fun ChallengeDetailContent(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     style = MaterialTheme.typography.bodySmall
                 )
+                if (challenge.transitionEndDate.isNotBlank()) {
+                    val inTransition = !currentCheckInDate.isBefore(LocalDate.parse(challenge.startDate)) &&
+                        !currentCheckInDate.isAfter(LocalDate.parse(challenge.transitionEndDate))
+                    Text(
+                        text = "过渡期：${challenge.startDate} ~ ${challenge.transitionEndDate}" +
+                            if (inTransition && challenge.status == ChallengeRepository.STATUS_ACTIVE) "（今天处于过渡期）" else "",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
                 Text(
                     text = "打卡进度：$doneCount / ${dayRange.size} 天",
                     color = MaterialTheme.colorScheme.onSurfaceVariant,

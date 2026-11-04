@@ -485,11 +485,20 @@ object ChatExecutor {
             挑战周期：${challenge.startDate} ~ ${challenge.endDate}
             当前打卡进度：已打卡 $checkInDays / 共 $totalDays 天。
         """.trimIndent()
+        // 过渡期（含截止当天）：今天落在 startDate ~ transitionEndDate 内时明确告知 AI 今天属于过渡期。
+        val transitionNote = challenge.transitionEndDate.takeIf { it.isNotBlank() }?.let { transitionEnd ->
+            val inTransition = runCatching { !checkInDate.isAfter(LocalDate.parse(transitionEnd)) }.getOrDefault(false)
+            if (inTransition) {
+                "\n${challenge.startDate} ~ $transitionEnd 是过渡期，今天是 $checkInDate，属于过渡期。"
+            } else {
+                ""
+            }
+        }.orEmpty()
         return when (challenge.status) {
             ChallengeRepository.STATUS_ACTIVE -> AiChatMessage(
                 role = "system",
                 content = """
-                    $base
+                    $base$transitionNote
                     每日打卡标准：
                     ${challenge.dailyStandardPrompt}
 

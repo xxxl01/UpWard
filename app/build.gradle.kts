@@ -20,8 +20,9 @@ android {
         applicationId = "com.xdl.upward"
         minSdk = 31
         targetSdk = 34
-        versionCode = 1
-        versionName = "1.0"
+        // 发版时由 Release workflow 传入：-PappVersionName=<tag> -PappVersionCode=<run_number>；本地构建用默认值
+        versionCode = (project.findProperty("appVersionCode") as String?)?.toIntOrNull() ?: 2
+        versionName = (project.findProperty("appVersionName") as String?) ?: "2.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {

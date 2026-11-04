@@ -280,6 +280,7 @@ class BackupRepository(
                     .put("fail_penalty_prompt", challenge.failPenaltyPrompt)
                     .put("start_date", challenge.startDate)
                     .put("end_date", challenge.endDate)
+                    .put("transition_end_date", challenge.transitionEndDate)
                     .put("status", challenge.status)
                     .put("created_at", challenge.createdAt)
                     .put("finished_at", challenge.finishedAt)
@@ -393,6 +394,8 @@ class BackupRepository(
                     failPenaltyPrompt = item.getString("fail_penalty_prompt"),
                     startDate = item.getString("start_date"),
                     endDate = item.getString("end_date"),
+                    // 旧备份没有过渡期字段，兜底为空（无过渡期）
+                    transitionEndDate = item.optString("transition_end_date", ""),
                     status = item.getString("status"),
                     createdAt = item.getString("created_at"),
                     finishedAt = item.optString("finished_at")

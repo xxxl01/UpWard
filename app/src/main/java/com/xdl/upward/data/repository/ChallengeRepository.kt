@@ -91,7 +91,8 @@ class ChallengeRepository(
         dailyStandardPrompt: String,
         failPenaltyPrompt: String,
         startDate: String,
-        endDate: String
+        endDate: String,
+        transitionEndDate: String
     ): Long {
         return challengeDao.insert(
             ChallengeEntity(
@@ -101,6 +102,7 @@ class ChallengeRepository(
                 failPenaltyPrompt = failPenaltyPrompt,
                 startDate = startDate,
                 endDate = endDate,
+                transitionEndDate = transitionEndDate,
                 status = STATUS_ACTIVE,
                 createdAt = OffsetDateTime.now().toString()
             )
@@ -115,7 +117,8 @@ class ChallengeRepository(
         dailyStandardPrompt: String,
         failPenaltyPrompt: String,
         startDate: String,
-        endDate: String
+        endDate: String,
+        transitionEndDate: String
     ) {
         val oldChallenge = challengeDao.getByProjectId(projectId)
         val now = OffsetDateTime.now().toString()
@@ -128,6 +131,7 @@ class ChallengeRepository(
                     failPenaltyPrompt = failPenaltyPrompt,
                     startDate = startDate,
                     endDate = endDate,
+                    transitionEndDate = transitionEndDate,
                     status = STATUS_ACTIVE,
                     createdAt = now
                 )
@@ -142,6 +146,7 @@ class ChallengeRepository(
                     failPenaltyPrompt = failPenaltyPrompt,
                     startDate = startDate,
                     endDate = endDate,
+                    transitionEndDate = transitionEndDate,
                     status = STATUS_ACTIVE,
                     finishedAt = ""
                 )
@@ -157,7 +162,8 @@ class ChallengeRepository(
         goal: String,
         dailyStandardPrompt: String,
         failPenaltyPrompt: String,
-        endDate: String
+        endDate: String,
+        transitionEndDate: String
     ): Boolean {
         val challenge = challengeDao.getByProjectId(projectId) ?: return false
         if (challenge.status != STATUS_ACTIVE) return false
@@ -166,7 +172,8 @@ class ChallengeRepository(
                 goal = goal,
                 dailyStandardPrompt = dailyStandardPrompt,
                 failPenaltyPrompt = failPenaltyPrompt,
-                endDate = endDate
+                endDate = endDate,
+                transitionEndDate = transitionEndDate
             )
         )
         return true

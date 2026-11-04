@@ -28,6 +28,9 @@ data class ChallengeEntity(
     val startDate: String,
     @ColumnInfo(name = "end_date")
     val endDate: String,
+    // 过渡期截止日期（含当天），为空表示没有过渡期；过渡期为 startDate ~ transitionEndDate。
+    @ColumnInfo(name = "transition_end_date")
+    val transitionEndDate: String = "",
     val status: String,
     @ColumnInfo(name = "created_at")
     val createdAt: String,

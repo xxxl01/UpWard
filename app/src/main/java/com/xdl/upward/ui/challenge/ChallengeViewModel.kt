@@ -53,6 +53,10 @@ class ChallengeViewModel(application: Application) : AndroidViewModel(applicatio
     private val _endDate = MutableStateFlow("")
     val endDate: StateFlow<String> = _endDate.asStateFlow()
 
+    // 过渡期截止日期（含当天），空字符串表示不设过渡期。
+    private val _transitionEndDate = MutableStateFlow("")
+    val transitionEndDate: StateFlow<String> = _transitionEndDate.asStateFlow()
+
     private val _editing = MutableStateFlow(false)
     val editing: StateFlow<Boolean> = _editing.asStateFlow()
 
@@ -89,6 +93,12 @@ class ChallengeViewModel(application: Application) : AndroidViewModel(applicatio
         _dailyStandardPrompt.value = challenge?.dailyStandardPrompt.orEmpty()
         _startDate.value = challenge?.startDate.orEmpty()
         _endDate.value = challenge?.endDate.orEmpty()
+        // 只有修改进行中的挑战才预填过渡期；开启新一轮时旧过渡期日期已过，重新选择
+        _transitionEndDate.value = if (challenge?.status == ChallengeRepository.STATUS_ACTIVE) {
+            challenge.transitionEndDate
+        } else {
+            ""
+        }
         _errorMessage.value = ""
         _noticeMessage.value = ""
         _editing.value = true
@@ -103,6 +113,9 @@ class ChallengeViewModel(application: Application) : AndroidViewModel(applicatio
     fun updateDailyStandardPrompt(value: String) { _dailyStandardPrompt.value = value }
     fun updateStartDate(value: String) { _startDate.value = value }
     fun updateEndDate(value: String) { _endDate.value = value }
+    fun updateTransitionEndDate(value: String) { _transitionEndDate.value = value }
+    fun clearTransitionEndDate() { _transitionEndDate.value = "" }
+    fun showError(message: String) { _errorMessage.value = message }
 
     // 保存：项目还没有挑战记录时创建；已有终态挑战记录时开启新一轮（重置并清空旧打卡）；
     // 已有 active 挑战记录时为修改：开始日期不可改，截止日期只能延后，其余字段变化需经 AI 判定难度是增强还是减弱。
@@ -135,6 +148,19 @@ class ChallengeViewModel(application: Application) : AndroidViewModel(applicatio
             _errorMessage.value = "截止日期必须晚于开始日期"
             return
         }
+        val transitionText = _transitionEndDate.value.trim()
+        if (transitionText.isNotEmpty()) {
+            val transitionEnd = try {
+                LocalDate.parse(transitionText)
+            } catch (e: Exception) {
+                _errorMessage.value = "过渡期日期无效，请重新选择"
+                return
+            }
+            if (transitionEnd.isBefore(startDate) || !transitionEnd.isBefore(endDate)) {
+                _errorMessage.value = "过渡期截止日期必须在开始日期（含）到截止日期（不含）之间"
+                return
+            }
+        }
 
         _errorMessage.value = ""
         viewModelScope.launch {
@@ -152,7 +178,7 @@ class ChallengeViewModel(application: Application) : AndroidViewModel(applicatio
             when {
                 // 项目还没有挑战记录：创建。
                 oldChallenge == null -> {
-                    challengeRepository.createChallenge(projectId, goalText, standardText, penaltyText, startDate.toString(), endDate.toString())
+                    challengeRepository.createChallenge(projectId, goalText, standardText, penaltyText, startDate.toString(), endDate.toString(), transitionText)
                     _editing.value = false
                     if (startDate.isAfter(challengeRepository.currentCheckInDate())) {
                         _noticeMessage.value = "挑战已设置，将于 $startDate 开始，开始前 AI 不会感知到该挑战。"
@@ -163,7 +189,7 @@ class ChallengeViewModel(application: Application) : AndroidViewModel(applicatio
                 // 已结算的终态：开启新一轮（重置并清空旧打卡记录）。
                 oldChallenge.status == ChallengeRepository.STATUS_SUCCESS ||
                     oldChallenge.status == ChallengeRepository.STATUS_SETTLED -> {
-                    challengeRepository.startNewRound(projectId, goalText, standardText, penaltyText, startDate.toString(), endDate.toString())
+                    challengeRepository.startNewRound(projectId, goalText, standardText, penaltyText, startDate.toString(), endDate.toString(), transitionText)
                     _editing.value = false
                     if (startDate.isAfter(challengeRepository.currentCheckInDate())) {
                         _noticeMessage.value = "新一轮挑战已设置，将于 $startDate 开始，开始前 AI 不会感知到该挑战。"
@@ -181,31 +207,44 @@ class ChallengeViewModel(application: Application) : AndroidViewModel(applicatio
                     }
                     // 开始日期未到（挑战未生效，AI 感知不到）：直接允许修改，不做难度判定。
                     if (challengeRepository.currentCheckInDate().isBefore(fixedStartDate)) {
-                        challengeRepository.updateActiveChallenge(projectId, goalText, standardText, penaltyText, endDate.toString())
+                        challengeRepository.updateActiveChallenge(projectId, goalText, standardText, penaltyText, endDate.toString(), transitionText)
                         _editing.value = false
                         _noticeMessage.value = "挑战已更新，将于 $fixedStartDate 开始，开始前 AI 不会感知到该挑战。"
                         return@launch
                     }
+                    // 已开始的挑战：过渡期只能保持、提前结束或取消，不能新增或延长（否则等于减弱难度）。
+                    val oldTransition = oldChallenge.transitionEndDate
+                    if (transitionText.isNotEmpty() &&
+                        (oldTransition.isEmpty() || LocalDate.parse(transitionText).isAfter(LocalDate.parse(oldTransition)))
+                    ) {
+                        _errorMessage.value = "挑战已开始，过渡期只能提前结束或取消，不能新增或延长"
+                        return@launch
+                    }
+                    val transitionChanged = transitionText != oldTransition
                     // 非时间字段是否有变化。
                     // 失败惩罚已固定，不参与变化判断（旧挑战里的自定义惩罚文本会在保存时被统一覆盖）
                     val fieldsChanged = goalText != oldChallenge.goal ||
                         standardText != oldChallenge.dailyStandardPrompt
-                    if (!fieldsChanged && endDate == oldEndDate) {
+                    if (!fieldsChanged && endDate == oldEndDate && !transitionChanged) {
                         _errorMessage.value = "没有检测到任何修改"
                         return@launch
                     }
-                    // 只延后截止日期、其他字段未变：总天数变多，难度必然增强，本地规则直接放行。
+                    // 只延后截止日期 / 提前结束过渡期、其他字段未变：难度必然增强，本地规则直接放行。
                     if (!fieldsChanged) {
-                        challengeRepository.updateActiveChallenge(projectId, goalText, standardText, penaltyText, endDate.toString())
+                        challengeRepository.updateActiveChallenge(projectId, goalText, standardText, penaltyText, endDate.toString(), transitionText)
                         _editing.value = false
-                        _noticeMessage.value = "截止日期已延后，挑战周期变为 $fixedStartDate ~ $endDate，已打卡记录保留。"
+                        _noticeMessage.value = if (endDate == oldEndDate) {
+                            "过渡期已更新，已打卡记录保留。"
+                        } else {
+                            "截止日期已延后，挑战周期变为 $fixedStartDate ~ $endDate，已打卡记录保留。"
+                        }
                         return@launch
                     }
                     // 其余字段有变化：向 AI 判定本次修改是增强还是减弱难度，增强才允许保存。
                     // 【临时】TEMP_ENABLE_AI_JUDGE_ON_MODIFY=false 时绕过 AI 判定直接保存；
                     // 恢复该限制只需把开关改回 true。
                     if (!TEMP_ENABLE_AI_JUDGE_ON_MODIFY) {
-                        challengeRepository.updateActiveChallenge(projectId, goalText, standardText, penaltyText, endDate.toString())
+                        challengeRepository.updateActiveChallenge(projectId, goalText, standardText, penaltyText, endDate.toString(), transitionText)
                         _editing.value = false
                         _noticeMessage.value = "挑战已更新。已打卡记录保留，从今天起按新标准考核。"
                         return@launch
@@ -230,7 +269,7 @@ class ChallengeViewModel(application: Application) : AndroidViewModel(applicatio
                             }
                             return@launch
                         }
-                        challengeRepository.updateActiveChallenge(projectId, goalText, standardText, penaltyText, endDate.toString())
+                        challengeRepository.updateActiveChallenge(projectId, goalText, standardText, penaltyText, endDate.toString(), transitionText)
                         _editing.value = false
                         _noticeMessage.value = "挑战已更新，AI 判定本次修改增强了难度。已打卡记录保留，从今天起按新标准考核。"
                     } catch (e: Exception) {
