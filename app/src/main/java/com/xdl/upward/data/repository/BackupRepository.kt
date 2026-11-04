@@ -10,6 +10,7 @@ import com.xdl.upward.data.local.ChallengeEntity
 import com.xdl.upward.data.local.ConfigEntity
 import com.xdl.upward.data.local.DailyRecordEntity
 import com.xdl.upward.data.local.MessageEntity
+import com.xdl.upward.data.local.PaymentRecordEntity
 import com.xdl.upward.data.local.ProjectEntity
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -56,6 +57,32 @@ class BackupRepository(
             )
         }
 
+        // 捐款记录的截图与聊天图片一样打包进 chat_images/
+        val paymentRecords = JSONArray()
+        database.paymentRecordDao().getAllForBackup().forEach { record ->
+            val file = File(record.imagePath)
+            val imagePath = if (record.imagePath.isNotBlank() && file.exists() && file.isFile) {
+                val entryName = "chat_images/${imageIndex}_${file.name}"
+                imageIndex++
+                imageEntries.add(entryName to file)
+                entryName
+            } else {
+                record.imagePath
+            }
+            paymentRecords.put(
+                JSONObject()
+                    .put("id", record.id)
+                    .put("purpose", record.purpose)
+                    .put("challenge_id", record.challengeId)
+                    .put("order_no", record.orderNo)
+                    .put("amount_cents", record.amountCents)
+                    .put("payee", record.payee)
+                    .put("paid_at", record.paidAt)
+                    .put("image_path", imagePath)
+                    .put("created_at", record.createdAt)
+            )
+        }
+
         val json = JSONObject()
             .put("format", "upward-full-backup")
             .put("version", 1)
@@ -66,6 +93,7 @@ class BackupRepository(
             .put("configs", configsToJson(database.configDao().getAllForBackup()))
             .put("challenges", challengesToJson(database.challengeDao().getAllForBackup()))
             .put("challenge_checkins", challengeCheckInsToJson(database.challengeCheckInDao().getAllForBackup()))
+            .put("payment_records", paymentRecords)
 
         context.contentResolver.openOutputStream(uri)?.use { outputStream ->
             ZipOutputStream(outputStream).use { zip ->
@@ -151,6 +179,7 @@ class BackupRepository(
             database.configDao().deleteAll()
             database.challengeDao().deleteAll()
             database.challengeCheckInDao().deleteAll()
+            database.paymentRecordDao().deleteAll()
 
             val projects = readProjects(json.getJSONArray("projects"))
             if (projects.isNotEmpty()) database.projectDao().insertAll(projects)
@@ -165,6 +194,9 @@ class BackupRepository(
             if (challenges.isNotEmpty()) database.challengeDao().insertAll(challenges)
             val checkIns = readChallengeCheckIns(json.optJSONArray("challenge_checkins"))
             if (checkIns.isNotEmpty()) database.challengeCheckInDao().insertAll(checkIns)
+            // 旧备份没有 payment_records，optJSONArray 兜底为空
+            val paymentRecords = readPaymentRecords(json.optJSONArray("payment_records"), restoredImagePaths)
+            if (paymentRecords.isNotEmpty()) database.paymentRecordDao().insertAll(paymentRecords)
         }
     }
 
@@ -386,5 +418,28 @@ class BackupRepository(
             )
         }
         return checkIns
+    }
+
+    private fun readPaymentRecords(array: JSONArray?, restoredImagePaths: Map<String, String>): List<PaymentRecordEntity> {
+        if (array == null) return emptyList()
+        val records = mutableListOf<PaymentRecordEntity>()
+        for (index in 0 until array.length()) {
+            val item = array.getJSONObject(index)
+            val path = item.optString("image_path")
+            records.add(
+                PaymentRecordEntity(
+                    id = item.getLong("id"),
+                    purpose = item.getString("purpose"),
+                    challengeId = item.optLong("challenge_id", 0),
+                    orderNo = item.getString("order_no"),
+                    amountCents = item.getLong("amount_cents"),
+                    payee = item.optString("payee"),
+                    paidAt = item.optString("paid_at"),
+                    imagePath = restoredImagePaths[path] ?: path,
+                    createdAt = item.getString("created_at")
+                )
+            )
+        }
+        return records
     }
 }

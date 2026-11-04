@@ -10,7 +10,11 @@ import com.xdl.upward.data.local.ChallengeEntity
 import com.xdl.upward.data.remote.AiApiService
 import com.xdl.upward.data.repository.AiApiRepository
 import com.xdl.upward.data.repository.ChallengeRepository
+import android.net.Uri
 import com.xdl.upward.domain.AiChatMessage
+import com.xdl.upward.domain.PaymentVerifier
+import java.io.File
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -24,6 +28,9 @@ class ChallengeViewModel(application: Application) : AndroidViewModel(applicatio
         // 【临时开关】修改进行中的挑战时，是否启用"AI 判定难度增强才允许保存"的限制。
         // 当前为 true：启用 AI 判定（仅允许增强）。
         const val TEMP_ENABLE_AI_JUDGE_ON_MODIFY = true
+
+        // 挑战失败惩罚固定为捐款，不再由用户自定义；写入 fail_penalty_prompt 列只作展示用。
+        const val FIXED_FAIL_PENALTY = "挑战失败需向公益慈善机构捐款 3 元及以上，在挑战页上传捐款截图，识别审核通过后结算。"
     }
 
     private val database = AppDatabase.getInstance(application)
@@ -39,9 +46,6 @@ class ChallengeViewModel(application: Application) : AndroidViewModel(applicatio
 
     private val _dailyStandardPrompt = MutableStateFlow("")
     val dailyStandardPrompt: StateFlow<String> = _dailyStandardPrompt.asStateFlow()
-
-    private val _failPenaltyPrompt = MutableStateFlow("")
-    val failPenaltyPrompt: StateFlow<String> = _failPenaltyPrompt.asStateFlow()
 
     private val _startDate = MutableStateFlow("")
     val startDate: StateFlow<String> = _startDate.asStateFlow()
@@ -62,6 +66,10 @@ class ChallengeViewModel(application: Application) : AndroidViewModel(applicatio
     private val _aiJudging = MutableStateFlow(false)
     val aiJudging: StateFlow<Boolean> = _aiJudging.asStateFlow()
 
+    // 失败惩罚捐款截图是否正在识别审核中（期间禁用上传按钮，防止重复提交）。
+    private val _paymentVerifying = MutableStateFlow(false)
+    val paymentVerifying: StateFlow<Boolean> = _paymentVerifying.asStateFlow()
+
     fun observeChallenge(projectId: Long): Flow<ChallengeEntity?> = challengeRepository.observeByProjectId(projectId)
 
     fun observeCheckIns(challengeId: Long): Flow<List<ChallengeCheckInEntity>> = challengeRepository.observeCheckIns(challengeId)
@@ -79,7 +87,6 @@ class ChallengeViewModel(application: Application) : AndroidViewModel(applicatio
     fun startEditing(challenge: ChallengeEntity?) {
         _goal.value = challenge?.goal.orEmpty()
         _dailyStandardPrompt.value = challenge?.dailyStandardPrompt.orEmpty()
-        _failPenaltyPrompt.value = challenge?.failPenaltyPrompt.orEmpty()
         _startDate.value = challenge?.startDate.orEmpty()
         _endDate.value = challenge?.endDate.orEmpty()
         _errorMessage.value = ""
@@ -94,7 +101,6 @@ class ChallengeViewModel(application: Application) : AndroidViewModel(applicatio
 
     fun updateGoal(value: String) { _goal.value = value }
     fun updateDailyStandardPrompt(value: String) { _dailyStandardPrompt.value = value }
-    fun updateFailPenaltyPrompt(value: String) { _failPenaltyPrompt.value = value }
     fun updateStartDate(value: String) { _startDate.value = value }
     fun updateEndDate(value: String) { _endDate.value = value }
 
@@ -112,11 +118,7 @@ class ChallengeViewModel(application: Application) : AndroidViewModel(applicatio
             _errorMessage.value = "请填写每日打卡标准"
             return
         }
-        val penaltyText = _failPenaltyPrompt.value.trim()
-        if (penaltyText.isEmpty()) {
-            _errorMessage.value = "请填写失败惩罚"
-            return
-        }
+        val penaltyText = FIXED_FAIL_PENALTY
         val startDate = try {
             LocalDate.parse(_startDate.value.trim())
         } catch (e: Exception) {
@@ -185,9 +187,9 @@ class ChallengeViewModel(application: Application) : AndroidViewModel(applicatio
                         return@launch
                     }
                     // 非时间字段是否有变化。
+                    // 失败惩罚已固定，不参与变化判断（旧挑战里的自定义惩罚文本会在保存时被统一覆盖）
                     val fieldsChanged = goalText != oldChallenge.goal ||
-                        standardText != oldChallenge.dailyStandardPrompt ||
-                        penaltyText != oldChallenge.failPenaltyPrompt
+                        standardText != oldChallenge.dailyStandardPrompt
                     if (!fieldsChanged && endDate == oldEndDate) {
                         _errorMessage.value = "没有检测到任何修改"
                         return@launch
@@ -215,7 +217,7 @@ class ChallengeViewModel(application: Application) : AndroidViewModel(applicatio
                             _errorMessage.value = "修改挑战需先经 AI 判定难度变化，请先在 API 设置中选择一个 API"
                             return@launch
                         }
-                        val judge = judgeDifficultyChange(api, oldChallenge, goalText, standardText, penaltyText, endDate.toString())
+                        val judge = judgeDifficultyChange(api, oldChallenge, goalText, standardText, endDate.toString())
                         if (judge == null) {
                             _errorMessage.value = "AI 判定失败，无法确认本次修改是否增强难度，已拒绝修改，请稍后重试"
                             return@launch
@@ -251,7 +253,6 @@ class ChallengeViewModel(application: Application) : AndroidViewModel(applicatio
         old: ChallengeEntity,
         goal: String,
         standard: String,
-        penalty: String,
         endDate: String
     ): JudgeResult? {
         val totalDays = challengeRepository.totalDays(old)
@@ -262,19 +263,17 @@ class ChallengeViewModel(application: Application) : AndroidViewModel(applicatio
             【原挑战】
             挑战目标：${old.goal}
             每日打卡标准：${old.dailyStandardPrompt}
-            失败惩罚：${old.failPenaltyPrompt}
             周期：${old.startDate} ~ ${old.endDate}
             已打卡 $checkInDays / $totalDays 天
 
             【修改后的挑战】
             挑战目标：$goal
             每日打卡标准：$standard
-            失败惩罚：$penalty
             周期：${old.startDate} ~ $endDate（开始日期不变）
 
             判定规则：
             1. 判断修改后，用户从今天到截止日期的剩余天数内，每天需要付出的自律成本（努力、意志力、时间、痛苦程度等）整体是否上升。上升 = 增强，下降 = 减弱。
-            2. 必须综合所有字段做净效果判断：挑战目标、每日打卡标准、失败惩罚、截止日期。截止日期延后意味着要持续更久 = 增强；失败惩罚加重 = 增强，减轻 = 减弱。
+            2. 必须综合所有字段做净效果判断：挑战目标、每日打卡标准、截止日期。截止日期延后意味着要持续更久 = 增强。
             3. 已打卡记录保留，从今天起按新标准考核。如果修改让标准变得几乎不可能完成、本质上是在变相逃避（例如把标准改到不可能达成来逼自己失败），即使字面上更严格，也判定为减弱。
             4. 只要净效果不明确或模棱两可，一律判定为减弱。
             5. 自然语言回复中不要解释，只在回复末尾输出判定工具块，不能放在代码块里。
@@ -330,7 +329,7 @@ class ChallengeViewModel(application: Application) : AndroidViewModel(applicatio
             }
             challengeRepository.markAsFailed(challenge.id)
             _errorMessage.value = ""
-            _noticeMessage.value = "挑战已手动标记为失败，进入失败惩罚流程。请去聊天中完成失败惩罚，由 AI 判定完成后自动结算。"
+            _noticeMessage.value = "挑战已手动标记为失败，进入失败惩罚流程：捐款 3 元及以上并上传捐款截图，审核通过后结算。"
         }
     }
 
@@ -362,8 +361,40 @@ class ChallengeViewModel(application: Application) : AndroidViewModel(applicatio
                 _noticeMessage.value = "挑战成功！你坚持到了截止日期并每天完成了打卡。"
             } else {
                 challengeRepository.markAsFailed(challenge.id)
-                _noticeMessage.value = "挑战失败：挑战期内有日期未打卡。请去聊天中完成失败惩罚，由 AI 判定完成后结算。"
+                _noticeMessage.value = "挑战失败：挑战期内有日期未打卡。请捐款 3 元及以上并上传捐款截图，审核通过后结算。"
             }
         }
+    }
+
+    // 提交挑战失败惩罚的捐款截图：保存图片 → LLM 识别 → 本地规则判定，通过后结算该挑战。
+    // 审核不通过时不入库，并删除本次保存的截图文件。
+    fun submitPenaltyPayment(challengeId: Long, uri: Uri) {
+        if (_paymentVerifying.value) return
+        _paymentVerifying.value = true
+        _errorMessage.value = ""
+        _noticeMessage.value = ""
+        viewModelScope.launch {
+            var imagePath: String? = null
+            try {
+                val context = getApplication<Application>()
+                imagePath = PaymentVerifier.saveImage(context, uri)
+                when (val result = PaymentVerifier.verifyChallengePenalty(context, challengeId, imagePath)) {
+                    is PaymentVerifier.Result.Accepted -> _noticeMessage.value = result.message
+                    is PaymentVerifier.Result.Rejected -> {
+                        _errorMessage.value = result.message
+                        deleteQuietly(imagePath)
+                    }
+                }
+            } catch (e: Exception) {
+                _errorMessage.value = "提交失败：${e.message ?: "未知错误"}"
+                imagePath?.let { deleteQuietly(it) }
+            } finally {
+                _paymentVerifying.value = false
+            }
+        }
+    }
+
+    private fun deleteQuietly(path: String) {
+        viewModelScope.launch(Dispatchers.IO) { File(path).delete() }
     }
 }

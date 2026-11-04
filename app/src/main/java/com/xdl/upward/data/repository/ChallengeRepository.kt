@@ -13,7 +13,7 @@ import java.time.temporal.ChronoUnit
 /**
  * 项目挑战数据访问与业务逻辑。
  * 状态机：active（进行中）→ failed（缺卡进入惩罚，中间态）/ success（成功结算）；
- * failed 经 AI 判定惩罚完成后 → settled（失败结算终态）；success / settled 可开启新一轮。
+ * failed 经捐款截图审核通过后 → settled（失败结算终态）；success / settled 可开启新一轮。
  * 每轮原子态：开启新一轮时重置挑战记录并清空旧打卡记录。
  */
 class ChallengeRepository(
@@ -197,7 +197,7 @@ class ChallengeRepository(
         challengeDao.updateStatus(challengeId, STATUS_FAILED, OffsetDateTime.now().toString())
     }
 
-    // 失败惩罚结算：failed → settled（由 AI 调用 settle_failed_challenge 触发）。
+    // 失败惩罚结算：failed → settled（由捐款截图审核通过后触发，见 PaymentVerifier）。
     suspend fun settleFailed(challengeId: Long) {
         challengeDao.updateStatus(challengeId, STATUS_SETTLED, OffsetDateTime.now().toString())
     }

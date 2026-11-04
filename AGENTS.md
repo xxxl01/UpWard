@@ -16,14 +16,18 @@ Android 原生单模块应用（`:app`，包名 `com.xdl.upward`）：按项目�
 
 ## Room 数据库约定
 
-- `data/local/AppDatabase.kt` 中 `version = 11`，手写 Migration 1→11，**没有** `fallbackToDestructiveMigration`。修改实体字段时必须同步加对应 Migration，否则已装用户升级会直接 crash（Room 抛 IllegalStateException）。
+- `data/local/AppDatabase.kt` 中 `version = 16`，手写 Migration 1→16，**没有** `fallbackToDestructiveMigration`。修改实体字段时必须同步加对应 Migration，否则已装用户升级会直接 crash（Room 抛 IllegalStateException）。
 - 新 config 键的默认值要用 `onOpen` 回调里已有的 `INSERT ... WHERE NOT EXISTS` 模式注入。
 - `onOpen` 每次打开都会 `DELETE FROM config WHERE key = 'daily_record_prompt'`，这是有意行为，不要当 bug 修。
 
 ## 聊天与 AI
 
 - `domain/ChatExecutor.kt` 是进程级单例：聊天请求生命周期脱离页面，退出聊天页/App 退后台仍会继续流式请求并写库；ViewModel 通过 `observeProjectChat(projectId)` 观察执行状态。改聊天逻辑先看这里。
-- AI 回复中嵌的 `<tool_call>{"name":"set_next_resume_time","arguments":{...}}</tool_call>` 是本地工具协议，由 ChatExecutor 解析执行（强制指定下次汇报时间）。违规累计 10 次**不再清空数据**，而是进入惩罚状态：拦截所有项目消息发送（ProjectDetailViewModel 入口拦截），违规次数达到 10 次后仍继续累加；用户需在任意慈善平台捐款 4 元以上并把捐款截图发给违规告诫页 AI，AI 确认后通过 `<tool_call>{"name":"reset_violation_count","arguments":{"summary":"审核依据"}}</tool_call>`（由 ViolationChatViewModel 解析执行）每笔捐款抵扣 10 次违规（降到 10 次以下才解除惩罚），同时自动把所有“失败惩罚中（failed）”的挑战结算为 settled，不再重复惩罚（`ChallengeRepository.settleAllFailed()`）；惩罚状态不受月度清零影响。金额门槛只写在提示词里，由 AI 看截图判断，代码不校验。修改时保持该协议格式与校验规则。
+- AI 回复中嵌的 `<tool_call>{"name":"set_next_resume_time","arguments":{...}}</tool_call>` 是本地工具协议，由 ChatExecutor 解析执行（强制指定下次汇报时间）。违规累计 10 次**不再清空数据**，而是进入惩罚状态：拦截所有项目消息发送（ProjectDetailViewModel / ChatExecutor 入口拦截），违规次数达到 10 次后仍继续累加；惩罚状态不受月度清零影响。
+- **惩罚捐款审核不走 AI 对话**（`domain/PaymentVerifier.kt`）：用户在挑战页 / 违规惩罚页上传捐款截图 → 一次 LLM 调用只识别 JSON（`payment_success`/`order_no`/`amount`/`payee`/`paid_at`/`is_charity`）→ 本地规则判定：支付成功、识别出交易单号、收款方为慈善机构、金额达标（挑战失败惩罚 ≥3 元，违规惩罚 ≥4 元）、单号未用过。通过后在一个事务里写 `payment_record` 并结算；不通过不入库，删除截图。支付时间目前只记录不校验。
+  - 挑战失败惩罚固定为捐款 3 元（`ChallengeViewModel.FIXED_FAIL_PENALTY`），通过后该挑战 failed → settled；AI 不能结算挑战（已移除 `settle_failed_challenge` 工具）。
+  - 违规惩罚通过后违规次数 -10（降到 10 次以下才解除），并调用 `ChallengeRepository.settleAllFailed()` 一并结算所有失败中的挑战（结算前会补做缺卡检测）。已移除违规告诫 AI 对话与 `reset_violation_count` 工具。
+  - 识别用当前选中的 API（需 `supportImage`），否则用其视觉辅助模型；都没有则直接报错。
 - 全局提醒时间存在 config 表：`global_reminder_morning_time` / `afternoon` / `evening`（默认 07:00 / 13:00 / 19:30）；`reminder/GlobalReminderScheduler.kt` 用 `setExactAndAllowWhileIdle` 排程，Android 13+ 需要用户授予精确闹钟权限。`MainActivity.onCreate` 会初始化 config 并 reschedule。
 - Manifest 已开 `usesCleartextTraffic="true"`，允许 http 明文 AI 接口（局域网/127.0.0.1 地址）。
 

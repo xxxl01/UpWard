@@ -16,9 +16,10 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         ConfigEntity::class,
         ChallengeEntity::class,
         ChallengeCheckInEntity::class,
-        HolidayEntity::class
+        HolidayEntity::class,
+        PaymentRecordEntity::class
     ],
-    version = 15,
+    version = 16,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -28,6 +29,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun aiApiDao(): AiApiDao
     abstract fun configDao(): ConfigDao
     abstract fun challengeDao(): ChallengeDao
+    abstract fun paymentRecordDao(): PaymentRecordDao
     abstract fun challengeCheckInDao(): ChallengeCheckInDao
     abstract fun holidayDao(): HolidayDao
 
@@ -225,6 +227,28 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        private val MIGRATION_15_16 = object : Migration(15, 16) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                // 惩罚捐款记录：截图识别通过后入库，交易单号唯一防止重复使用
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS payment_record (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        purpose TEXT NOT NULL,
+                        challenge_id INTEGER NOT NULL,
+                        order_no TEXT NOT NULL,
+                        amount_cents INTEGER NOT NULL,
+                        payee TEXT NOT NULL,
+                        paid_at TEXT NOT NULL,
+                        image_path TEXT NOT NULL,
+                        created_at TEXT NOT NULL
+                    )
+                    """.trimIndent()
+                )
+                db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_payment_record_order_no ON payment_record (order_no)")
+            }
+        }
+
         fun getInstance(context: Context): AppDatabase {
             return instance ?: synchronized(this) {
                 instance ?: Room.databaseBuilder(
@@ -232,7 +256,7 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     "upward.db"
                 )
-                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15)
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16)
                     .addCallback(object : Callback() {
                         override fun onOpen(db: SupportSQLiteDatabase) {
                             super.onOpen(db)

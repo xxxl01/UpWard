@@ -1,5 +1,8 @@
 package com.xdl.upward.ui.challenge
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -23,6 +26,8 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.DatePicker
 import androidx.compose.material3.DatePickerDialog
@@ -73,7 +78,13 @@ fun ChallengeScreen(
     val editing by viewModel.editing.collectAsStateWithLifecycle()
     val goal by viewModel.goal.collectAsStateWithLifecycle()
     val dailyStandardPrompt by viewModel.dailyStandardPrompt.collectAsStateWithLifecycle()
-    val failPenaltyPrompt by viewModel.failPenaltyPrompt.collectAsStateWithLifecycle()
+    val paymentVerifying by viewModel.paymentVerifying.collectAsStateWithLifecycle()
+    val paymentPickerLauncher = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
+        val currentChallenge = challenge
+        if (uri != null && currentChallenge != null) {
+            viewModel.submitPenaltyPayment(currentChallenge.id, uri)
+        }
+    }
     val startDate by viewModel.startDate.collectAsStateWithLifecycle()
     val endDate by viewModel.endDate.collectAsStateWithLifecycle()
     val errorMessage by viewModel.errorMessage.collectAsStateWithLifecycle()
@@ -140,7 +151,6 @@ fun ChallengeScreen(
                 editing -> ChallengeEditForm(
                     goal = goal,
                     dailyStandardPrompt = dailyStandardPrompt,
-                    failPenaltyPrompt = failPenaltyPrompt,
                     startDate = startDate,
                     endDate = endDate,
                     isModifyMode = isModifyMode,
@@ -149,7 +159,6 @@ fun ChallengeScreen(
                     aiJudging = aiJudging,
                     onGoalChange = viewModel::updateGoal,
                     onDailyStandardPromptChange = viewModel::updateDailyStandardPrompt,
-                    onFailPenaltyPromptChange = viewModel::updateFailPenaltyPrompt,
                     onPickStartDate = { showStartDatePicker = true },
                     onPickEndDate = { showEndDatePicker = true },
                     onSave = { viewModel.save(projectId) },
@@ -171,6 +180,10 @@ fun ChallengeScreen(
                     onManualFail = { confirmManualFailVisible = true },
                     onModify = { viewModel.startEditing(challenge) },
                     onStartNewRound = { viewModel.startEditing(challenge) },
+                    paymentVerifying = paymentVerifying,
+                    onUploadPayment = {
+                        paymentPickerLauncher.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+                    },
                     currentCheckInDate = currentCheckInDate
                 )
             }
@@ -238,7 +251,7 @@ fun ChallengeScreen(
             onDismissRequest = { confirmManualFailVisible = false },
             title = { Text("手动标记失败") },
             text = {
-                Text("确认将当前挑战手动标记为失败？标记后立即进入失败惩罚流程，需去聊天中完成失败惩罚，由 AI 判定完成后自动结算，期间挑战无法继续打卡与修改。")
+                Text("确认将当前挑战手动标记为失败？标记后立即进入失败惩罚流程，需捐款 3 元及以上并上传捐款截图，审核通过后结算，期间挑战无法继续打卡与修改。")
             },
             confirmButton = {
                 TextButton(
@@ -354,7 +367,6 @@ private fun ChallengeHeaderBar(
 private fun ChallengeEditForm(
     goal: String,
     dailyStandardPrompt: String,
-    failPenaltyPrompt: String,
     startDate: String,
     endDate: String,
     isModifyMode: Boolean,
@@ -363,7 +375,6 @@ private fun ChallengeEditForm(
     aiJudging: Boolean,
     onGoalChange: (String) -> Unit,
     onDailyStandardPromptChange: (String) -> Unit,
-    onFailPenaltyPromptChange: (String) -> Unit,
     onPickStartDate: () -> Unit,
     onPickEndDate: () -> Unit,
     onSave: () -> Unit,
@@ -387,7 +398,7 @@ private fun ChallengeEditForm(
                 isModifyMode && !ChallengeViewModel.TEMP_ENABLE_AI_JUDGE_ON_MODIFY ->
                     "每天都必须完成目标并打卡，缺一天即挑战失败。修改进行中的挑战：截止日期只能延后；其余字段可直接修改（当前为临时设置，暂不做 AI 难度判定）。已打卡记录保留，从今天起按新标准考核。"
                 isModifyMode ->
-                    "每天都必须完成目标并打卡，缺一天即挑战失败。修改进行中的挑战：截止日期只能延后；修改目标、每日标准或失败惩罚时，AI 会判断难度是增强还是减弱，只有增强才允许保存，减弱会被拒绝，挑战按原标准继续到截止日期。已打卡记录保留，从今天起按新标准考核。"
+                    "每天都必须完成目标并打卡，缺一天即挑战失败。修改进行中的挑战：截止日期只能延后；修改目标或每日标准时，AI 会判断难度是增强还是减弱，只有增强才允许保存，减弱会被拒绝，挑战按原标准继续到截止日期。已打卡记录保留，从今天起按新标准考核。"
                 !ChallengeViewModel.TEMP_ENABLE_AI_JUDGE_ON_MODIFY ->
                     "每天都必须完成目标并打卡，缺一天即挑战失败。开始日期前 AI 不会感知到挑战；挑战开始后可修改（当前为临时设置，暂不做 AI 难度判定），截止日期只能延后。"
                 else ->
@@ -415,14 +426,7 @@ private fun ChallengeEditForm(
         modifier = Modifier.fillMaxWidth()
     )
     Spacer(modifier = Modifier.height(12.dp))
-    OutlinedTextField(
-        value = failPenaltyPrompt,
-        onValueChange = onFailPenaltyPromptChange,
-        label = { Text("失败惩罚") },
-        supportingText = { Text("挑战失败后需要完成的惩罚要求，由 AI 与你对话并判定是否完成。") },
-        minLines = 4,
-        modifier = Modifier.fillMaxWidth()
-    )
+    ChallengeInfoCard(title = "失败惩罚", content = ChallengeViewModel.FIXED_FAIL_PENALTY)
     Spacer(modifier = Modifier.height(12.dp))
     if (isModifyMode) {
         // 修改模式：开始日期锁定不可改，只读展示。
@@ -613,6 +617,8 @@ private fun ChallengeDetailContent(
     onManualFail: () -> Unit,
     onModify: () -> Unit,
     onStartNewRound: () -> Unit,
+    paymentVerifying: Boolean,
+    onUploadPayment: () -> Unit,
     currentCheckInDate: LocalDate
 ) {
     // 开始日期未到：挑战处于“未开始”状态，AI 感知不到，也不产生打卡。
@@ -677,7 +683,8 @@ private fun ChallengeDetailContent(
         Spacer(modifier = Modifier.height(12.dp))
         ChallengeInfoCard(title = "每日打卡标准", content = challenge.dailyStandardPrompt)
         Spacer(modifier = Modifier.height(12.dp))
-        ChallengeInfoCard(title = "失败惩罚", content = challenge.failPenaltyPrompt)
+        // 失败惩罚已固定为捐款，旧挑战里存的自定义惩罚文本不再展示
+        ChallengeInfoCard(title = "失败惩罚", content = ChallengeViewModel.FIXED_FAIL_PENALTY)
 
         when {
             // 进行中（含未开始的 pending）：允许修改，只能增强难度；到截止日当天后可同时结算。
@@ -724,10 +731,28 @@ private fun ChallengeDetailContent(
             challenge.status == ChallengeRepository.STATUS_FAILED -> {
                 Spacer(modifier = Modifier.height(16.dp))
                 Text(
-                    text = "挑战已失败：去聊天中完成失败惩罚，AI 判定惩罚完成后会自动结算，结算后即可开启新一轮挑战。",
+                    text = "挑战已失败：向公益慈善机构捐款 3 元及以上，上传包含交易单号的捐款截图，识别审核通过后自动结算，结算后即可开启新一轮挑战。",
                     color = MaterialTheme.colorScheme.error,
                     style = MaterialTheme.typography.bodySmall
                 )
+                Spacer(modifier = Modifier.height(12.dp))
+                Button(
+                    onClick = onUploadPayment,
+                    enabled = !paymentVerifying,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    if (paymentVerifying) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(18.dp),
+                            strokeWidth = 2.dp,
+                            color = MaterialTheme.colorScheme.onPrimary
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("正在识别审核…")
+                    } else {
+                        Text("上传捐款截图")
+                    }
+                }
             }
         }
 

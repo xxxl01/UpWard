@@ -104,7 +104,7 @@ object ChatExecutor {
                     update(projectId) {
                         it.copy(
                             errorMessage = if (finalCount >= 10) {
-                                "已错过指定回复时间，违规累计已达到惩罚线：需捐款 4 元并把截图发给违规告诫页的 AI，每笔捐款只能抵扣 10 次违规。"
+                                "已错过指定回复时间，违规累计已达到惩罚线：需捐款 4 元及以上，到“违规惩罚”页上传捐款截图，每笔捐款抵扣 10 次违规。"
                             } else {
                                 "已错过指定回复时间，已记为违规 $finalCount/10。"
                             }
@@ -115,7 +115,7 @@ object ChatExecutor {
                     ?: (deps.configRepository.getValue("violation_count")?.toIntOrNull() ?: 0)
                 if (violationCount >= 10) {
                     update(projectId) {
-                        it.copy(errorMessage = "你已累计违规 $violationCount 次，处于惩罚状态，消息发送已被拦截。请到“违规告诫”页捐款 4 元并截图给 AI；每笔捐款只能抵扣 10 次违规。")
+                        it.copy(errorMessage = "你已累计违规 $violationCount 次，处于惩罚状态，消息发送已被拦截。请捐款 4 元及以上，到“违规惩罚”页上传捐款截图；每笔捐款抵扣 10 次违规。")
                     }
                     return@launch
                 }
@@ -182,7 +182,7 @@ object ChatExecutor {
                         $nextRequiredTimeRule
 
                         你可以强制指定用户下一次汇报时间。这个工具适合在用户状态不佳、拖延风险高、需要被你推一把时使用：如果你认为某个时间段用户需要向你汇报进展，你就可以指定用户必须在这个时间段内给你发消息，从而让用户被你“推”到。
-                        如果用户在你指定的时间段内没有给你发消息，会算作一次违规；违规累计达到 10 次会触发惩罚：用户在所有项目里发消息都会被拦截，必须到“违规告诫”页，在任意慈善平台捐款 4 元并把捐款截图发给 AI；每笔捐款只能抵扣 10 次违规，剩余违规继续保留。
+                        如果用户在你指定的时间段内没有给你发消息，会算作一次违规；违规累计达到 10 次会触发惩罚：用户在所有项目里发消息都会被拦截，必须向公益慈善机构捐款 4 元及以上，到“违规惩罚”页上传包含交易单号的捐款截图，审核通过后每笔抵扣 10 次违规，剩余违规继续保留。
                         如果你决定强制指定下一次汇报时间，请在回复末尾额外输出一个本地工具调用块。工具调用块必须严格使用下面格式，不能放在代码块里：
                          <tool_call>{"name":"set_next_resume_time","arguments":{"start_at":"ISO-8601 时间"}}</tool_call>
                          工具规则：AI 只能填写 start_at，系统会把结束时间固定为开始时间之后 25 分钟，AI 提供的 end_at 会被忽略。start_at 不能早于当前时间；已有汇报时间时，既可以提前，也可以延后。只在确实要安排恢复窗口时调用一次；窗口结束且用户未回复时会记一次违规并清除窗口，不会自动开启新窗口。自然语言回复中不要解释工具 JSON。
@@ -313,7 +313,7 @@ object ChatExecutor {
                         $nextRequiredTimeRule
 
                         你可以强制指定用户下一次汇报时间。这个工具适合在用户状态不佳、拖延风险高、需要被你推一把时使用：如果你认为某个时间段用户需要向你汇报进展，你就可以指定用户必须在这个时间段内给你发消息，从而让用户被你“推”到。
-                        如果用户在你指定的时间段内没有给你发消息，会算作一次违规；违规累计达到 10 次会触发惩罚：用户在所有项目里发消息都会被拦截，必须到“违规告诫”页，在任意慈善平台捐款 4 元并把捐款截图发给 AI；每笔捐款只能抵扣 10 次违规，剩余违规继续保留。
+                        如果用户在你指定的时间段内没有给你发消息，会算作一次违规；违规累计达到 10 次会触发惩罚：用户在所有项目里发消息都会被拦截，必须向公益慈善机构捐款 4 元及以上，到“违规惩罚”页上传包含交易单号的捐款截图，审核通过后每笔抵扣 10 次违规，剩余违规继续保留。
                         如果你决定强制指定下一次汇报时间，请在回复末尾额外输出一个本地工具调用块。工具调用块必须严格使用下面格式，不能放在代码块里：
                          <tool_call>{"name":"set_next_resume_time","arguments":{"start_at":"ISO-8601 时间"}}</tool_call>
                          工具规则：AI 只能填写 start_at，系统会把结束时间固定为开始时间之后 25 分钟，AI 提供的 end_at 会被忽略。start_at 不能早于当前时间；已有汇报时间时，既可以提前，也可以延后。只在确实要安排恢复窗口时调用一次；窗口结束且用户未回复时会记一次违规并清除窗口，不会自动开启新窗口。自然语言回复中不要解释工具 JSON。
@@ -504,14 +504,9 @@ object ChatExecutor {
                 role = "system",
                 content = """
                     $base
-                    该挑战已因某天未完成打卡而失败，现在进入失败惩罚流程。
-                    失败惩罚要求：
-                    ${challenge.failPenaltyPrompt}
-
-                    你要与用户对话，督促用户完成上述惩罚要求，并根据对话内容判断用户是否真正完成了惩罚。当用户确实完成了惩罚要求时，请在回复末尾额外输出一个本地工具调用块，完成失败结算，不能放在代码块里：
-                    <tool_call>{"name":"settle_failed_challenge","arguments":{"summary":"简要说明惩罚完成情况"}}</tool_call>
-                    工具规则：只有在用户明确完成惩罚要求后才能调用；工具调用块必须严格使用上面格式；自然语言回复中不要解释工具 JSON。
-                    结算完成后，用户才可以开启新一轮挑战。
+                    该挑战已因某天未完成打卡而失败，现在处于失败惩罚中。
+                    失败惩罚固定为：向公益慈善机构捐款 3 元及以上，并在“挑战”页上传包含交易单号的捐款截图，由系统识别审核，通过后自动结算。
+                    你无法通过对话结算惩罚，也不要声称已经结算；如果用户在聊天里发捐款截图，请提醒他到“挑战”页上传。你可以督促用户尽快完成捐款，结算后才能开启新一轮挑战。
                 """.trimIndent()
             )
             else -> null
@@ -602,7 +597,6 @@ object ChatExecutor {
                 when (toolJson.optString("name")) {
                     "set_next_resume_time" -> executeSetNextResumeTime(deps, projectId, toolJson)
                     "complete_daily_challenge" -> executeCompleteDailyChallenge(deps, projectId, toolJson)
-                    "settle_failed_challenge" -> executeSettleFailedChallenge(deps, projectId)
                     else -> ""
                 }
             } catch (e: Exception) {
@@ -667,18 +661,5 @@ object ChatExecutor {
             return "工具已执行：今日挑战已打卡（$checkInDays/$totalDays 天）。这是挑战最后一天且全程无缺卡，挑战已自动结算为成功。"
         }
         return "工具已执行：今日挑战已打卡（$checkInDays/$totalDays 天）。"
-    }
-
-    // 执行“失败后结算挑战”工具：AI 判断用户完成失败惩罚后，把挑战从 failed 结算为 settled。
-    private suspend fun executeSettleFailedChallenge(deps: ProjectChatDeps, projectId: Long): String {
-        val challenge = deps.challengeRepository.getByProjectId(projectId)
-        if (challenge == null) {
-            return "工具调用失败：当前没有挑战记录。"
-        }
-        if (challenge.status != ChallengeRepository.STATUS_FAILED) {
-            return "工具调用失败：当前挑战不是失败状态，无需惩罚结算。"
-        }
-        deps.challengeRepository.settleFailed(challenge.id)
-        return "工具已执行：失败惩罚已完成，挑战已结算，可以开启新一轮挑战。"
     }
 }
