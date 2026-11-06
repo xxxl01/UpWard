@@ -186,6 +186,9 @@ object ChatExecutor {
                         如果你决定强制指定下一次汇报时间，请在回复末尾额外输出一个本地工具调用块。工具调用块必须严格使用下面格式，不能放在代码块里：
                          <tool_call>{"name":"set_next_resume_time","arguments":{"start_at":"ISO-8601 时间"}}</tool_call>
                          工具规则：AI 只能填写 start_at，系统会把结束时间固定为开始时间之后 25 分钟，AI 提供的 end_at 会被忽略。start_at 不能早于当前时间；已有汇报时间时，既可以提前，也可以延后。只在确实要安排恢复窗口时调用一次；窗口结束且用户未回复时会记一次违规并清除窗口，不会自动开启新窗口。自然语言回复中不要解释工具 JSON。
+                         如果你认为之前指定的汇报时间已经没有必要（例如用户已经提前汇报、计划变了、状态已恢复），可以取消它，同样在回复末尾输出工具调用块，不能放在代码块里：
+                         <tool_call>{"name":"clear_next_resume_time","arguments":{}}</tool_call>
+                         工具规则：只在当前确实存在已指定的汇报时间时调用；取消后该时间段不再要求用户汇报，也不会因此记违规。同一条回复里不要同时设置和取消。
                         """.trimIndent()
                     )
                 }
@@ -317,6 +320,9 @@ object ChatExecutor {
                         如果你决定强制指定下一次汇报时间，请在回复末尾额外输出一个本地工具调用块。工具调用块必须严格使用下面格式，不能放在代码块里：
                          <tool_call>{"name":"set_next_resume_time","arguments":{"start_at":"ISO-8601 时间"}}</tool_call>
                          工具规则：AI 只能填写 start_at，系统会把结束时间固定为开始时间之后 25 分钟，AI 提供的 end_at 会被忽略。start_at 不能早于当前时间；已有汇报时间时，既可以提前，也可以延后。只在确实要安排恢复窗口时调用一次；窗口结束且用户未回复时会记一次违规并清除窗口，不会自动开启新窗口。自然语言回复中不要解释工具 JSON。
+                         如果你认为之前指定的汇报时间已经没有必要（例如用户已经提前汇报、计划变了、状态已恢复），可以取消它，同样在回复末尾输出工具调用块，不能放在代码块里：
+                         <tool_call>{"name":"clear_next_resume_time","arguments":{}}</tool_call>
+                         工具规则：只在当前确实存在已指定的汇报时间时调用；取消后该时间段不再要求用户汇报，也不会因此记违规。同一条回复里不要同时设置和取消。
                         """.trimIndent()
                     )
                 }
@@ -605,6 +611,7 @@ object ChatExecutor {
                 val toolJson = JSONObject(toolText)
                 when (toolJson.optString("name")) {
                     "set_next_resume_time" -> executeSetNextResumeTime(deps, projectId, toolJson)
+                    "clear_next_resume_time" -> executeClearNextResumeTime(deps, projectId)
                     "complete_daily_challenge" -> executeCompleteDailyChallenge(deps, projectId, toolJson)
                     else -> ""
                 }
@@ -619,6 +626,17 @@ object ChatExecutor {
     }
 
     // 执行“强制指定下次汇报时间”工具，返回给用户看的执行结果提示。
+    // 执行“取消下次汇报时间”工具：清空已指定的汇报窗口并取消提醒，取消后该窗口不再记违规。
+    private suspend fun executeClearNextResumeTime(deps: ProjectChatDeps, projectId: Long): String {
+        val project = deps.repository.getProject(projectId) ?: return "工具调用失败：项目不存在。"
+        if (project.nextRequiredMessageEndAt.isBlank()) {
+            return "工具调用失败：当前没有已指定的汇报时间，无需取消。"
+        }
+        deps.repository.setNextRequiredMessagePeriod(projectId, "", "")
+        RequiredMessageReminderScheduler.cancel(deps.appContext, projectId)
+        return "工具已执行：已取消指定的汇报时间。"
+    }
+
     private suspend fun executeSetNextResumeTime(deps: ProjectChatDeps, projectId: Long, toolJson: JSONObject): String {
         val arguments = toolJson.getJSONObject("arguments")
         val startAt = OffsetDateTime.parse(arguments.optString("start_at", "").trim())
