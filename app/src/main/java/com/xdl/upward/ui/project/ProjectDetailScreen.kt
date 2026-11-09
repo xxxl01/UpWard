@@ -162,6 +162,8 @@ fun ProjectDetailScreen(
     var innerVoiceText by remember { mutableStateOf("") }
     var criticalMode by remember { mutableStateOf(false) }
     var experienceMode by remember { mutableStateOf(false) }
+    // 闲聊模式：关闭默认的简洁回复规则，可与其他模式同时开启
+    var casualMode by remember { mutableStateOf(false) }
     val isNearBottom by remember {
         derivedStateOf { listState.firstVisibleItemIndex <= 1 }
     }
@@ -333,7 +335,7 @@ fun ProjectDetailScreen(
                         canResend = message.id == messages.lastOrNull()?.id,
                         onEdit = viewModel::updateMessage,
                         onDelete = viewModel::deleteMessage,
-                        onResend = { viewModel.resendLastMessage(projectId, message.id, criticalMode, experienceMode) }
+                        onResend = { viewModel.resendLastMessage(projectId, message.id, criticalMode, experienceMode, casualMode) }
                     )
                 }
             }
@@ -346,6 +348,7 @@ fun ProjectDetailScreen(
             innerVoiceEnabled = project?.innerVoiceEnabled == true,
             criticalMode = criticalMode,
             experienceMode = experienceMode,
+            casualMode = casualMode,
             onInputChange = viewModel::updateInput,
             onPickImage = { imagePickerLauncher.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
             onRemoveImage = viewModel::removeSelectedImage,
@@ -383,7 +386,8 @@ fun ProjectDetailScreen(
                     viewModel.setInnerVoiceEnabled(projectId, false)
                 }
             },
-            onSend = { viewModel.sendUserMessage(projectId, criticalMode, experienceMode) },
+            onToggleCasual = { casualMode = !casualMode },
+            onSend = { viewModel.sendUserMessage(projectId, criticalMode, experienceMode, casualMode) },
             onStop = { viewModel.stopUserMessage(projectId) }
         )
     }
@@ -586,6 +590,7 @@ private fun ProjectChatInputBar(
     innerVoiceEnabled: Boolean,
     criticalMode: Boolean,
     experienceMode: Boolean,
+    casualMode: Boolean,
     onInputChange: (String) -> Unit,
     onPickImage: () -> Unit,
     onRemoveImage: (String) -> Unit,
@@ -593,6 +598,7 @@ private fun ProjectChatInputBar(
     onEditInnerVoice: () -> Unit,
     onToggleCritical: () -> Unit,
     onToggleExperience: () -> Unit,
+    onToggleCasual: () -> Unit,
     onSend: () -> Unit,
     onStop: () -> Unit
 ) {
@@ -721,6 +727,17 @@ private fun ProjectChatInputBar(
                         painter = painterResource(LucideR.drawable.lucide_ic_book_open_check),
                         contentDescription = "经验模式",
                         tint = if (experienceMode) activeColor else MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+                IconButton(
+                    onClick = onToggleCasual,
+                    enabled = !loading
+                ) {
+                    Icon(
+                        painter = painterResource(LucideR.drawable.lucide_ic_message_circle_more),
+                        contentDescription = "闲聊模式",
+                        tint = if (casualMode) activeColor else MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.size(20.dp)
                     )
                 }

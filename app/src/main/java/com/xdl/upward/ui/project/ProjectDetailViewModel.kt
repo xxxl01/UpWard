@@ -190,7 +190,8 @@ class ProjectDetailViewModel(application: Application) : AndroidViewModel(applic
     fun sendUserMessage(
         projectId: Long,
         criticalMode: Boolean = false,
-        experienceMode: Boolean = false
+        experienceMode: Boolean = false,
+        casualMode: Boolean = false
     ) {
         val content = _input.value.trim()
         val imagePaths = _selectedImagePaths.value
@@ -213,7 +214,8 @@ class ProjectDetailViewModel(application: Application) : AndroidViewModel(applic
             content,
             imagePaths,
             criticalMode,
-            experienceMode
+            experienceMode,
+            casualMode
         )
     }
 
@@ -237,7 +239,8 @@ class ProjectDetailViewModel(application: Application) : AndroidViewModel(applic
         projectId: Long,
         messageId: Long,
         criticalMode: Boolean = false,
-        experienceMode: Boolean = false
+        experienceMode: Boolean = false,
+        casualMode: Boolean = false
     ) {
         if (_loading.value) return
 
@@ -248,7 +251,7 @@ class ProjectDetailViewModel(application: Application) : AndroidViewModel(applic
         }
 
         _errorMessage.value = ""
-        ChatExecutor.resendLastMessage(getApplication(), projectId, messageId, criticalMode, experienceMode)
+        ChatExecutor.resendLastMessage(getApplication(), projectId, messageId, criticalMode, experienceMode, casualMode)
     }
 
     fun generateTodayRecord(projectId: Long) {

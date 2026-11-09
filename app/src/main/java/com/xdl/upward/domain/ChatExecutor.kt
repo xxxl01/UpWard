@@ -84,9 +84,10 @@ object ChatExecutor {
         content: String,
         imagePaths: List<String>,
         criticalMode: Boolean = false,
-        experienceMode: Boolean = false
+        experienceMode: Boolean = false,
+        casualMode: Boolean = false
     ) {
-        launchChat(context, projectId, criticalMode, experienceMode) { deps ->
+        launchChat(context, projectId, criticalMode, experienceMode, casualMode) { deps ->
             deps.messageRepository.addUserMessage(projectId, content, imagePaths)
             imagePaths
         }
@@ -100,9 +101,10 @@ object ChatExecutor {
         projectId: Long,
         messageId: Long,
         criticalMode: Boolean = false,
-        experienceMode: Boolean = false
+        experienceMode: Boolean = false,
+        casualMode: Boolean = false
     ) {
-        launchChat(context, projectId, criticalMode, experienceMode) { deps ->
+        launchChat(context, projectId, criticalMode, experienceMode, casualMode) { deps ->
             val lastMessage = deps.messageRepository.getLastMessage(projectId)
             if (lastMessage == null || lastMessage.id != messageId) {
                 update(projectId) { it.copy(errorMessage = "只能重新发送当前最后一条消息") }
@@ -119,6 +121,7 @@ object ChatExecutor {
         projectId: Long,
         criticalMode: Boolean,
         experienceMode: Boolean,
+        casualMode: Boolean,
         prepareInput: suspend (ProjectChatDeps) -> List<String>?
     ) {
         val job = scope.launch {
@@ -201,7 +204,14 @@ object ChatExecutor {
                 } else {
                     "当前已指定的下一次汇报时间：$nextRequiredMessageStartAt 到 $nextRequiredMessageEndAt。如果要修改，可以提前，也可以延后；新的 start_at 不能早于当前时间。"
                 }
-                val requestMessages = deps.aiMessageBuilder.buildChatMessages(project, dailyRecords, recentMessages, includeExperience = experienceMode).toMutableList()
+                val requestMessages = deps.aiMessageBuilder.buildChatMessages(
+                    project,
+                    dailyRecords,
+                    recentMessages,
+                    // 闲聊模式、心里话模式下放开篇幅，不加简洁回复规则
+                    includeReplyRules = !casualMode && !project.innerVoiceEnabled,
+                    includeExperience = experienceMode
+                ).toMutableList()
                 if (requestMessages.isNotEmpty()) {
                     val systemMessage = requestMessages[0]
                     requestMessages[0] = systemMessage.copy(
