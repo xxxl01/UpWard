@@ -333,7 +333,7 @@ fun ProjectDetailScreen(
                         canResend = message.id == messages.lastOrNull()?.id,
                         onEdit = viewModel::updateMessage,
                         onDelete = viewModel::deleteMessage,
-                        onResend = { viewModel.resendLastMessage(projectId, message.id) }
+                        onResend = { viewModel.resendLastMessage(projectId, message.id, criticalMode, experienceMode) }
                     )
                 }
             }

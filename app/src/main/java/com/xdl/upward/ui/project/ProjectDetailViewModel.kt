@@ -233,7 +233,12 @@ class ProjectDetailViewModel(application: Application) : AndroidViewModel(applic
         ChatExecutor.stop(projectId)
     }
 
-    fun resendLastMessage(projectId: Long, messageId: Long) {
+    fun resendLastMessage(
+        projectId: Long,
+        messageId: Long,
+        criticalMode: Boolean = false,
+        experienceMode: Boolean = false
+    ) {
         if (_loading.value) return
 
         // 惩罚状态同样拦截重发
@@ -243,7 +248,7 @@ class ProjectDetailViewModel(application: Application) : AndroidViewModel(applic
         }
 
         _errorMessage.value = ""
-        ChatExecutor.resendLastMessage(getApplication(), projectId, messageId)
+        ChatExecutor.resendLastMessage(getApplication(), projectId, messageId, criticalMode, experienceMode)
     }
 
     fun generateTodayRecord(projectId: Long) {

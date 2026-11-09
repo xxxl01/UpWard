@@ -84,6 +84,41 @@ object ChatExecutor {
         criticalMode: Boolean = false,
         experienceMode: Boolean = false
     ) {
+        launchChat(context, projectId, criticalMode, experienceMode) { deps ->
+            deps.messageRepository.addUserMessage(projectId, content, imagePaths)
+            imagePaths
+        }
+    }
+
+    // 用当前最后一条消息重新请求 AI，不重复追加这条消息。
+    // 与正常发送走同一条流程：同样带上当前的临界/经验模式，同样做缺卡检测、汇报窗口超时记违规、
+    // 以及“在汇报窗口内发消息 = 完成本次汇报”的窗口清除。
+    fun resendLastMessage(
+        context: Context,
+        projectId: Long,
+        messageId: Long,
+        criticalMode: Boolean = false,
+        experienceMode: Boolean = false
+    ) {
+        launchChat(context, projectId, criticalMode, experienceMode) { deps ->
+            val lastMessage = deps.messageRepository.getLastMessage(projectId)
+            if (lastMessage == null || lastMessage.id != messageId) {
+                update(projectId) { it.copy(errorMessage = "只能重新发送当前最后一条消息") }
+                return@launchChat null
+            }
+            if (lastMessage.role == "user") parseImagePaths(lastMessage.imagePaths) else emptyList()
+        }
+    }
+
+    // 发送与重发共用的聊天流程。prepareInput 负责落库新消息（发送）或校验最后一条消息（重发），
+    // 返回本次需要绑定给 AI 的图片路径；返回 null 表示中止。
+    private fun launchChat(
+        context: Context,
+        projectId: Long,
+        criticalMode: Boolean,
+        experienceMode: Boolean,
+        prepareInput: suspend (ProjectChatDeps) -> List<String>?
+    ) {
         val job = scope.launch {
             val deps = ProjectChatDeps(context)
             var shouldRestoreRequiredTime = false
@@ -119,21 +154,16 @@ object ChatExecutor {
                     }
                     return@launch
                 }
+
+                val imagePaths = prepareInput(deps) ?: return@launch
                 val project = deps.repository.getProject(projectId) ?: return@launch
 
+                // 当前处于汇报窗口内：本次发送即视为完成汇报，先清除窗口；请求失败时再恢复。
                 var nextRequiredMessageStartAt = project.nextRequiredMessageStartAt
                 var nextRequiredMessageEndAt = project.nextRequiredMessageEndAt
                 if (project.nextRequiredMessageEndAt.isNotBlank()) {
-                    val startTime = try {
-                        OffsetDateTime.parse(project.nextRequiredMessageStartAt)
-                    } catch (e: Exception) {
-                        null
-                    }
-                    val endTime = try {
-                        OffsetDateTime.parse(project.nextRequiredMessageEndAt)
-                    } catch (e: Exception) {
-                        null
-                    }
+                    val startTime = runCatching { OffsetDateTime.parse(project.nextRequiredMessageStartAt) }.getOrNull()
+                    val endTime = runCatching { OffsetDateTime.parse(project.nextRequiredMessageEndAt) }.getOrNull()
                     val now = OffsetDateTime.now()
                     if (startTime == null || endTime == null) {
                         deps.repository.setNextRequiredMessagePeriod(projectId, "", "")
@@ -150,8 +180,6 @@ object ChatExecutor {
                         nextRequiredMessageEndAt = ""
                     }
                 }
-
-                deps.messageRepository.addUserMessage(projectId, content, imagePaths)
 
                 val api = deps.aiApiRepository.getSelected()
                 if (api == null) {
@@ -247,6 +275,7 @@ object ChatExecutor {
             } catch (e: CancellationException) {
                 // 用户点击停止时保留已经收到的流式内容，不提示为错误。
             } catch (e: Exception) {
+                // 请求失败时恢复汇报窗口，不能白白算作已汇报（用户主动停止不恢复，与原逻辑一致）。
                 if (shouldRestoreRequiredTime && !sendCompleted) {
                     deps.repository.setNextRequiredMessagePeriod(projectId, originalRequiredMessageStartAt, originalRequiredMessageEndAt)
                     RequiredMessageReminderScheduler.schedule(deps.appContext, projectId, originalRequiredMessageStartAt, originalRequiredMessageEndAt)
@@ -267,142 +296,19 @@ object ChatExecutor {
         }
     }
 
-    fun stop(projectId: Long) {
-        synchronized(chatJobs) {
-            chatJobs[projectId]?.cancel()
+    private fun parseImagePaths(imagePathsJson: String): List<String> {
+        if (imagePathsJson.isBlank()) return emptyList()
+        return try {
+            val array = JSONArray(imagePathsJson)
+            (0 until array.length()).map { array.optString(it).trim() }.filter { it.isNotEmpty() }
+        } catch (e: Exception) {
+            emptyList()
         }
     }
 
-    // 用当前最后一条消息重新请求 AI，不重复追加这条消息。
-    fun resendLastMessage(context: Context, projectId: Long, messageId: Long) {
-        val job = scope.launch {
-            val deps = ProjectChatDeps(context)
-            try {
-                update(projectId) { it.copy(loading = true, aiThinking = false, errorMessage = "") }
-                val project = deps.repository.getProject(projectId)
-                if (project == null) {
-                    update(projectId) { it.copy(errorMessage = "项目不存在") }
-                    return@launch
-                }
-                // 挑战缺卡自动检测：挑战期内有日期没打卡则进入失败惩罚流程（状态置为 failed）。
-                deps.challengeRepository.checkForMissedDays(projectId)
-
-                val lastMessage = deps.messageRepository.getLastMessage(projectId)
-                if (lastMessage == null || lastMessage.id != messageId) {
-                    update(projectId) { it.copy(errorMessage = "只能重新发送当前最后一条消息") }
-                    return@launch
-                }
-
-                val api = deps.aiApiRepository.getSelected()
-                if (api == null) {
-                    update(projectId) { it.copy(errorMessage = "请先在 API 设置中选择一个 API") }
-                    return@launch
-                }
-
-                val count = deps.configRepository.getMessageContextCount()
-                val dailyRecords = deps.dailyRecordRepository.getAllByProjectId(projectId)
-                val recentMessages = deps.messageRepository.getRecentMessages(projectId, count)
-                val nextRequiredTimeRule = if (project.nextRequiredMessageEndAt.isBlank()) {
-                    "当前没有已指定的下一次汇报时间。"
-                } else {
-                    "当前已指定的下一次汇报时间：${project.nextRequiredMessageStartAt} 到 ${project.nextRequiredMessageEndAt}。如果要修改，可以提前，也可以延后；新的 start_at 不能早于当前时间。"
-                }
-                val requestMessages = deps.aiMessageBuilder.buildChatMessages(project, dailyRecords, recentMessages, includeExperience = false).toMutableList()
-                if (requestMessages.isNotEmpty()) {
-                    val systemMessage = requestMessages[0]
-                    requestMessages[0] = systemMessage.copy(
-                        content = systemMessage.content + """
-
-                        当前项目 id：$projectId。
-                        当前时间：${describeNow(deps)}。
-                        $nextRequiredTimeRule
-
-                        你可以强制指定用户下一次汇报时间。这个工具适合在用户状态不佳、拖延风险高、需要被你推一把时使用：如果你认为某个时间段用户需要向你汇报进展，你就可以指定用户必须在这个时间段内给你发消息，从而让用户被你“推”到。
-                        如果用户在你指定的时间段内没有给你发消息，会算作一次违规；违规累计达到 10 次会触发惩罚：用户在所有项目里发消息都会被拦截，必须向公益慈善机构捐款 4 元及以上，到“违规惩罚”页上传包含交易单号的捐款截图，审核通过后每笔抵扣 10 次违规，剩余违规继续保留。
-                        【本地工具调用协议】需要调用工具时，在回复末尾输出 JSONL：每行一个 JSON 对象，代表一次工具调用；需要调用几个工具就输出几行，可以同时调用不同工具。不要加标签、不要放进代码块，每行只能有这一个 JSON 对象。这些行会直接显示给用户，系统在回复结束后逐行解析执行；只在文字里说“已安排”“已打卡”而不输出对应的 JSON 行，等于没有调用。
-                        示例（两个工具同时调用）：
-                        {"name":"complete_daily_challenge","arguments":{"date":"2026-01-01","summary":"判定依据"}}
-                        {"name":"set_next_resume_time","arguments":{"start_at":"2026-01-02T22:00:00+08:00"}}
-
-                        如果你决定强制指定下一次汇报时间，在 JSONL 中输出一行：
-                         {"name":"set_next_resume_time","arguments":{"start_at":"ISO-8601 时间"}}
-                         工具规则：AI 只能填写 start_at，系统会把结束时间固定为开始时间之后 25 分钟，AI 提供的 end_at 会被忽略。start_at 不能早于当前时间；已有汇报时间时，既可以提前，也可以延后。只在确实要安排恢复窗口时调用一次；窗口结束且用户未回复时会记一次违规并清除窗口，不会自动开启新窗口。
-                        """.trimIndent()
-                    )
-                }
-                buildChallengeSystemMessage(deps, projectId)?.let { challengeMessage ->
-                    requestMessages.add(challengeMessage)
-                }
-                if (lastMessage.role == "user" && lastMessage.imagePaths.isNotBlank()) {
-                    val imagePaths = mutableListOf<String>()
-                    try {
-                        val imagePathArray = JSONArray(lastMessage.imagePaths)
-                        for (index in 0 until imagePathArray.length()) {
-                            val path = imagePathArray.optString(index).trim()
-                            if (path.isNotEmpty()) {
-                                imagePaths.add(path)
-                            }
-                        }
-                    } catch (e: Exception) {
-                    }
-                    if (imagePaths.isNotEmpty()) {
-                        bindImagesToLastUserMessage(deps, projectId, api, requestMessages, imagePaths)
-                    }
-                }
-                appendInnerVoicePrompt(requestMessages, project)
-
-                var assistantMessageId = 0L
-                val reply = StringBuilder()
-                var lastUpdateAt = 0L
-                val finalReply = deps.aiApiService.streamChat(
-                    api = api,
-                    messages = requestMessages,
-                    onContentDelta = { delta ->
-                        update(projectId) { it.copy(aiThinking = false) }
-                        reply.append(delta)
-                        if (assistantMessageId == 0L) {
-                            assistantMessageId = deps.messageRepository.addAssistantMessage(projectId, reply.toString())
-                            lastUpdateAt = System.currentTimeMillis()
-                        } else {
-                            val now = System.currentTimeMillis()
-                            if (now - lastUpdateAt >= 250L) {
-                                deps.messageRepository.updateMessageContent(assistantMessageId, reply.toString())
-                                lastUpdateAt = now
-                            }
-                        }
-                    },
-                    onReasoningDelta = {
-                        if (reply.isEmpty()) {
-                            update(projectId) { it.copy(aiThinking = true) }
-                        }
-                    }
-                )
-                val visibleReply = executeToolCalls(deps, projectId, finalReply)
-                if (assistantMessageId != 0L) {
-                    if (visibleReply.isEmpty()) {
-                        deps.messageRepository.deleteMessage(assistantMessageId)
-                    } else {
-                        deps.messageRepository.updateMessageContent(assistantMessageId, visibleReply)
-                    }
-                } else if (visibleReply.isNotEmpty()) {
-                    deps.messageRepository.addAssistantMessage(projectId, visibleReply)
-                }
-            } catch (e: CancellationException) {
-                // 用户点击停止时保留已经收到的流式内容，不提示为错误。
-            } catch (e: Exception) {
-                update(projectId) { it.copy(errorMessage = e.message ?: "AI 请求失败") }
-            } finally {
-                update(projectId) { it.copy(loading = false, aiThinking = false) }
-            }
-        }
+    fun stop(projectId: Long) {
         synchronized(chatJobs) {
             chatJobs[projectId]?.cancel()
-            chatJobs[projectId] = job
-            job.invokeOnCompletion {
-                synchronized(chatJobs) {
-                    if (chatJobs[projectId] === job) chatJobs.remove(projectId)
-                }
-            }
         }
     }
 
