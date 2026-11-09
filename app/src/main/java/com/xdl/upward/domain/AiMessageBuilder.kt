@@ -8,8 +8,11 @@ class AiMessageBuilder {
     fun buildChatMessages(
         project: ProjectEntity,
         dailyRecords: List<DailyRecordEntity>,
-        recentMessages: List<MessageEntity>
+        recentMessages: List<MessageEntity>,
+        includeReplyRules: Boolean = true
     ): List<AiChatMessage> {
+        // 回复长度/风格规则只用于聊天；生成日报等长文本任务不能受“100 字以内”限制。
+        val replyRules = if (includeReplyRules) "\n\n" + CHAT_REPLY_RULES else ""
         val dailyRecordText = if (dailyRecords.isEmpty()) {
             "暂无每日记录。"
         } else {
@@ -32,10 +35,9 @@ class AiMessageBuilder {
                 $dailyRecordText
 
                 每日记录里有普通记录，也有明确标注为“经验”的经验记录。普通记录要按当前情景判断重要性：如果当前回复需要了解当天发生了什么、当时状态、项目背景或上下文，就要认真参考；如果无关，就不要强行放大。
-                明确标注为“经验”的内容要额外重视，优先当作用户已经沉淀过的有效依据，用来判断当前情况和组织建议。
-                如果经验记录里有能指导当前回复的做法、规律、失败教训、拖延诱因、环境限制或下一步提醒，你必须把它用到建议里，并尽量点明依据来自过往经验记录；不要只依赖最近几条对话。
-                如果每日记录和当前对话有冲突，以当前对话为准，但要说明与过往记录的差异。
-                """.trimIndent()
+                明确标注为“经验”的内容要额外重视，优先当作用户已经沉淀过的有效依据，用来判断当前情况；需要给建议时优先从经验里找依据。
+                如果每日记录和当前对话有冲突，以当前对话为准。
+                """.trimIndent() + replyRules
             )
         )
         recentMessages.forEach { message ->
@@ -74,8 +76,20 @@ class AiMessageBuilder {
         recentMessages: List<MessageEntity>,
         prompt: String
     ): List<AiChatMessage> {
-        val messages = buildChatMessages(project, dailyRecords, recentMessages).toMutableList()
+        val messages = buildChatMessages(project, dailyRecords, recentMessages, includeReplyRules = false).toMutableList()
         messages.add(AiChatMessage("user", prompt))
         return messages
+    }
+
+    companion object {
+        // 聊天回复规则：核心是控制篇幅；监督、鼓励照常，但建议不必每次主动给。
+        private val CHAT_REPLY_RULES = """
+            回复规则（项目规则或用户明确另有要求时以它们为准）：
+            1. 篇幅：默认 1~3 句话、100 字以内，像微信聊天一样说话。用户消息很短时回复也要短。不要用表格、标题、多级列表，不要逐项复述用户发来的内容。
+            2. 挑战打卡：通过时一两句话说明通过和当前进度即可，不逐项列核验过程；不通过时只说缺了哪一项、怎么补。
+            3. 建议：不必每次都给。只在确有必要（用户求助、明显卡住、出现新风险）时给，一次最多一条，一句话说完。
+            4. 不重复：最近对话里已经提醒过的事情（截止日期、待办、作息等），不要每条回复都再提，除非快到期了或用户问起。
+            5. 用户在对话里提出过的回复偏好（例如“简短回复就行”），之后一直遵守。
+        """.trimIndent()
     }
 }
