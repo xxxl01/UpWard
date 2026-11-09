@@ -171,7 +171,7 @@ object ChatExecutor {
                 } else {
                     "当前已指定的下一次汇报时间：$nextRequiredMessageStartAt 到 $nextRequiredMessageEndAt。如果要修改，可以提前，也可以延后；新的 start_at 不能早于当前时间。"
                 }
-                val requestMessages = deps.aiMessageBuilder.buildChatMessages(project, dailyRecords, recentMessages).toMutableList()
+                val requestMessages = deps.aiMessageBuilder.buildChatMessages(project, dailyRecords, recentMessages, includeExperience = experienceMode).toMutableList()
                 if (requestMessages.isNotEmpty()) {
                     val systemMessage = requestMessages[0]
                     requestMessages[0] = systemMessage.copy(
@@ -307,7 +307,7 @@ object ChatExecutor {
                 } else {
                     "当前已指定的下一次汇报时间：${project.nextRequiredMessageStartAt} 到 ${project.nextRequiredMessageEndAt}。如果要修改，可以提前，也可以延后；新的 start_at 不能早于当前时间。"
                 }
-                val requestMessages = deps.aiMessageBuilder.buildChatMessages(project, dailyRecords, recentMessages).toMutableList()
+                val requestMessages = deps.aiMessageBuilder.buildChatMessages(project, dailyRecords, recentMessages, includeExperience = false).toMutableList()
                 if (requestMessages.isNotEmpty()) {
                     val systemMessage = requestMessages[0]
                     requestMessages[0] = systemMessage.copy(

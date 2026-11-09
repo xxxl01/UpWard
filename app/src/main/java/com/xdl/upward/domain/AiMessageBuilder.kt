@@ -9,14 +9,22 @@ class AiMessageBuilder {
         project: ProjectEntity,
         dailyRecords: List<DailyRecordEntity>,
         recentMessages: List<MessageEntity>,
-        includeReplyRules: Boolean = true
+        includeReplyRules: Boolean = true,
+        includeExperience: Boolean = true
     ): List<AiChatMessage> {
         // 回复长度/风格规则只用于聊天；生成日报等长文本任务不能受“100 字以内”限制。
         val replyRules = if (includeReplyRules) "\n\n" + CHAT_REPLY_RULES else ""
-        val dailyRecordText = if (dailyRecords.isEmpty()) {
+        // 经验记录（内容以“经验”开头的每日记录）默认不进聊天上下文，只在经验模式下拼接。
+        val visibleRecords = if (includeExperience) dailyRecords else dailyRecords.filterNot { isExperienceRecord(it) }
+        val experienceNote = if (includeExperience) {
+            "\n每日记录里有普通记录，也有明确标注为“经验”的经验记录。普通记录要按当前情景判断重要性：如果当前回复需要了解当天发生了什么、当时状态、项目背景或上下文，就要认真参考；如果无关，就不要强行放大。\n明确标注为“经验”的内容要额外重视，优先当作用户已经沉淀过的有效依据，用来判断当前情况；需要给建议时优先从经验里找依据。"
+        } else {
+            "\n每日记录要按当前情景判断重要性：如果当前回复需要了解当天发生了什么、当时状态、项目背景或上下文，就要认真参考；如果无关，就不要强行放大。"
+        }
+        val dailyRecordText = if (visibleRecords.isEmpty()) {
             "暂无每日记录。"
         } else {
-            dailyRecords.joinToString("\n\n") { record ->
+            visibleRecords.joinToString("\n\n") { record ->
                 "${record.date}\n${record.content}"
             }
         }
@@ -33,11 +41,7 @@ class AiMessageBuilder {
 
                 以下是这个项目从开始到现在的每日记录，按日期升序排列：
                 $dailyRecordText
-
-                每日记录里有普通记录，也有明确标注为“经验”的经验记录。普通记录要按当前情景判断重要性：如果当前回复需要了解当天发生了什么、当时状态、项目背景或上下文，就要认真参考；如果无关，就不要强行放大。
-                明确标注为“经验”的内容要额外重视，优先当作用户已经沉淀过的有效依据，用来判断当前情况；需要给建议时优先从经验里找依据。
-                如果每日记录和当前对话有冲突，以当前对话为准。
-                """.trimIndent() + replyRules
+                """.trimIndent() + "\n" + experienceNote + "\n如果每日记录和当前对话有冲突，以当前对话为准。" + replyRules
             )
         )
         recentMessages.forEach { message ->
@@ -82,6 +86,10 @@ class AiMessageBuilder {
     }
 
     companion object {
+        // 经验记录：内容（去掉开头的 Markdown 标记）以“经验”开头，如“经验：…”“经验2：…”。
+        private fun isExperienceRecord(record: DailyRecordEntity): Boolean =
+            record.content.trimStart().trimStart('#', '*', ' ', '【', '[').startsWith("经验")
+
         // 聊天回复规则：核心是控制篇幅；监督、鼓励照常，但建议不必每次主动给。
         private val CHAT_REPLY_RULES = """
             回复规则（项目规则或用户明确另有要求时以它们为准）：
