@@ -207,6 +207,15 @@ class ChallengeRepository(
     // 失败惩罚结算：failed → settled（由捐款截图审核通过后触发，见 PaymentVerifier）。
     suspend fun settleFailed(challengeId: Long) {
         challengeDao.updateStatus(challengeId, STATUS_SETTLED, OffsetDateTime.now().toString())
+        challengeDao.getById(challengeId)?.let { markSettleDayDone(it) }
+    }
+
+    // 结算当天仍按挑战日判定（challengeOfDate 以 finishedAt 为界），但挑战已结束、无法再打卡，
+    // 不补记录的话当天会一直显示“未打卡”、次日又显示成缺卡。结算时把当天（在挑战周期内时）直接记为完成。
+    private suspend fun markSettleDayDone(challenge: ChallengeEntity) {
+        val today = currentCheckInDate()
+        if (today.isBefore(LocalDate.parse(challenge.startDate)) || today.isAfter(LocalDate.parse(challenge.endDate))) return
+        checkInToday(challenge.id, today.toString(), "失败惩罚已结算，当天自动记为完成")
     }
 
     // 捐款结算违规时一并结算：所有处于失败惩罚中（failed）的挑战直接置为 settled，不再重复惩罚。返回结算数量。
@@ -218,7 +227,10 @@ class ChallengeRepository(
             .forEach { checkForMissedDays(it.projectId) }
         val failed = challengeDao.getFailed()
         val now = OffsetDateTime.now().toString()
-        failed.forEach { challengeDao.updateStatus(it.id, STATUS_SETTLED, now) }
+        failed.forEach {
+            challengeDao.updateStatus(it.id, STATUS_SETTLED, now)
+            markSettleDayDone(it)
+        }
         return failed.size
     }
 
