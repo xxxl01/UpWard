@@ -37,6 +37,7 @@ import java.time.OffsetDateTime
 object ChatExecutor {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val WEEKDAYS = listOf("周一", "周二", "周三", "周四", "周五", "周六", "周日")
+    private val TOOL_NAMES = setOf("set_next_resume_time", "complete_daily_challenge")
 
     data class ProjectChatState(
         val loading: Boolean = false,
@@ -183,9 +184,9 @@ object ChatExecutor {
 
                         你可以强制指定用户下一次汇报时间。这个工具适合在用户状态不佳、拖延风险高、需要被你推一把时使用：如果你认为某个时间段用户需要向你汇报进展，你就可以指定用户必须在这个时间段内给你发消息，从而让用户被你“推”到。
                         如果用户在你指定的时间段内没有给你发消息，会算作一次违规；违规累计达到 10 次会触发惩罚：用户在所有项目里发消息都会被拦截，必须向公益慈善机构捐款 4 元及以上，到“违规惩罚”页上传包含交易单号的捐款截图，审核通过后每笔抵扣 10 次违规，剩余违规继续保留。
-                        如果你决定强制指定下一次汇报时间，请在回复末尾额外输出一个本地工具调用块。工具调用块必须严格使用下面格式，不能放在代码块里：
-                         <tool_call>{"name":"set_next_resume_time","arguments":{"start_at":"ISO-8601 时间"}}</tool_call>
-                         工具规则：AI 只能填写 start_at，系统会把结束时间固定为开始时间之后 25 分钟，AI 提供的 end_at 会被忽略。start_at 不能早于当前时间；已有汇报时间时，既可以提前，也可以延后。只在确实要安排恢复窗口时调用一次；窗口结束且用户未回复时会记一次违规并清除窗口，不会自动开启新窗口。自然语言回复中不要解释工具 JSON。
+                        如果你决定强制指定下一次汇报时间，请在回复末尾单独占一行输出下面这行 JSON（一行一个工具调用，不要加标签、不要放进代码块，这行会直接显示给用户）：
+                         {"name":"set_next_resume_time","arguments":{"start_at":"ISO-8601 时间"}}
+                         工具规则：AI 只能填写 start_at，系统会把结束时间固定为开始时间之后 25 分钟，AI 提供的 end_at 会被忽略。start_at 不能早于当前时间；已有汇报时间时，既可以提前，也可以延后。只在确实要安排恢复窗口时调用一次；窗口结束且用户未回复时会记一次违规并清除窗口，不会自动开启新窗口。
                         """.trimIndent()
                     )
                 }
@@ -209,12 +210,12 @@ object ChatExecutor {
                         update(projectId) { it.copy(aiThinking = false) }
                         reply.append(delta)
                         if (assistantMessageId == 0L) {
-                            assistantMessageId = deps.messageRepository.addAssistantMessage(projectId, visibleStreamingText(reply.toString()))
+                            assistantMessageId = deps.messageRepository.addAssistantMessage(projectId, reply.toString())
                             lastUpdateAt = System.currentTimeMillis()
                         } else {
                             val now = System.currentTimeMillis()
                             if (now - lastUpdateAt >= 250L) {
-                                deps.messageRepository.updateMessageContent(assistantMessageId, visibleStreamingText(reply.toString()))
+                                deps.messageRepository.updateMessageContent(assistantMessageId, reply.toString())
                                 lastUpdateAt = now
                             }
                         }
@@ -227,7 +228,7 @@ object ChatExecutor {
                 )
                 val visibleReply = executeToolCalls(deps, projectId, finalReply)
                 if (assistantMessageId != 0L) {
-                    // 回复只有工具调用块、剥完什么都不剩时不留空气泡
+                    // 回复为空时不留空气泡
                     if (visibleReply.isEmpty()) {
                         deps.messageRepository.deleteMessage(assistantMessageId)
                     } else {
@@ -314,9 +315,9 @@ object ChatExecutor {
 
                         你可以强制指定用户下一次汇报时间。这个工具适合在用户状态不佳、拖延风险高、需要被你推一把时使用：如果你认为某个时间段用户需要向你汇报进展，你就可以指定用户必须在这个时间段内给你发消息，从而让用户被你“推”到。
                         如果用户在你指定的时间段内没有给你发消息，会算作一次违规；违规累计达到 10 次会触发惩罚：用户在所有项目里发消息都会被拦截，必须向公益慈善机构捐款 4 元及以上，到“违规惩罚”页上传包含交易单号的捐款截图，审核通过后每笔抵扣 10 次违规，剩余违规继续保留。
-                        如果你决定强制指定下一次汇报时间，请在回复末尾额外输出一个本地工具调用块。工具调用块必须严格使用下面格式，不能放在代码块里：
-                         <tool_call>{"name":"set_next_resume_time","arguments":{"start_at":"ISO-8601 时间"}}</tool_call>
-                         工具规则：AI 只能填写 start_at，系统会把结束时间固定为开始时间之后 25 分钟，AI 提供的 end_at 会被忽略。start_at 不能早于当前时间；已有汇报时间时，既可以提前，也可以延后。只在确实要安排恢复窗口时调用一次；窗口结束且用户未回复时会记一次违规并清除窗口，不会自动开启新窗口。自然语言回复中不要解释工具 JSON。
+                        如果你决定强制指定下一次汇报时间，请在回复末尾单独占一行输出下面这行 JSON（一行一个工具调用，不要加标签、不要放进代码块，这行会直接显示给用户）：
+                         {"name":"set_next_resume_time","arguments":{"start_at":"ISO-8601 时间"}}
+                         工具规则：AI 只能填写 start_at，系统会把结束时间固定为开始时间之后 25 分钟，AI 提供的 end_at 会被忽略。start_at 不能早于当前时间；已有汇报时间时，既可以提前，也可以延后。只在确实要安排恢复窗口时调用一次；窗口结束且用户未回复时会记一次违规并清除窗口，不会自动开启新窗口。
                         """.trimIndent()
                     )
                 }
@@ -351,12 +352,12 @@ object ChatExecutor {
                         update(projectId) { it.copy(aiThinking = false) }
                         reply.append(delta)
                         if (assistantMessageId == 0L) {
-                            assistantMessageId = deps.messageRepository.addAssistantMessage(projectId, visibleStreamingText(reply.toString()))
+                            assistantMessageId = deps.messageRepository.addAssistantMessage(projectId, reply.toString())
                             lastUpdateAt = System.currentTimeMillis()
                         } else {
                             val now = System.currentTimeMillis()
                             if (now - lastUpdateAt >= 250L) {
-                                deps.messageRepository.updateMessageContent(assistantMessageId, visibleStreamingText(reply.toString()))
+                                deps.messageRepository.updateMessageContent(assistantMessageId, reply.toString())
                                 lastUpdateAt = now
                             }
                         }
@@ -502,9 +503,9 @@ object ChatExecutor {
                     每日打卡标准：
                     ${challenge.dailyStandardPrompt}
 
-                    判定规则：当用户明确表达此消息为挑战打卡相关时（例如“这条消息是今天的挑战打卡”），你需要根据上面的每日打卡标准，判断用户是否完成了今天的目标。只有用户明确表达本条消息与挑战打卡相关时才进行判定，其他日常聊天不要擅自打卡。如果用户完成了今天的目标，请在回复末尾额外输出一个本地工具调用块，不能放在代码块里：
-                    <tool_call>{"name":"complete_daily_challenge","arguments":{"date":"当天日期 yyyy-MM-dd","summary":"简要说明判定依据"}}</tool_call>
-                    工具规则：date 必须是当前打卡日的日期（每天凌晨 4 点换日，00:00 至 04:00 仍算前一天）；同一天只能打卡一次；工具调用块必须严格使用上面格式；自然语言回复中不要解释工具 JSON。
+                    判定规则：当用户明确表达此消息为挑战打卡相关时（例如“这条消息是今天的挑战打卡”），你需要根据上面的每日打卡标准，判断用户是否完成了今天的目标。只有用户明确表达本条消息与挑战打卡相关时才进行判定，其他日常聊天不要擅自打卡。如果用户完成了今天的目标，必须在回复末尾单独占一行输出下面这行 JSON（不要加标签、不要放进代码块，这行会直接显示给用户，系统读到这行才会真正打卡；只在文字里说“打卡通过”而不输出这行，等于没有打卡）：
+                    {"name":"complete_daily_challenge","arguments":{"date":"当天日期 yyyy-MM-dd","summary":"简要说明判定依据"}}
+                    工具规则：date 必须是当前打卡日的日期（每天凌晨 4 点换日，00:00 至 04:00 仍算前一天）；同一天只能打卡一次；JSON 必须严格使用上面格式并且整行只有这一个 JSON 对象。
                     挑战成功：坚持到截止日期且每天都完成打卡，即可在挑战页手动结算为挑战成功。
                     失败后果：挑战期内任何一天未打卡即判定挑战失败，随后必须进入失败惩罚流程。
                 """.trimIndent()
@@ -571,38 +572,16 @@ object ChatExecutor {
         )
     }
 
-    // 流式期间落库用的文本：截掉 <tool_call> 开始标签及之后的内容。
-    // 流式过程中工具块可能还没输完，直接落库会让用户看到裸的指令 JSON；
-    // 而且请求中断时这段原文会留在库里、下一轮作为 assistant 历史回灌，模型会照着模仿输出纯文本。
-    private fun visibleStreamingText(text: String): String {
-        val startIndex = text.indexOf("<tool_call>")
-        return if (startIndex < 0) text else text.substring(0, startIndex).trimEnd()
-    }
-
-    // 解析并执行项目聊天里的本地工具调用，返回剥掉所有 <tool_call> 块后的纯净回复。
-    // 执行结果只通过页面状态临时提示，绝不写进消息正文：正文会作为 assistant 历史回灌给 AI，
-    // 一旦里面有"[工具已执行…]"这类日志，模型（尤其 DeepSeek）会照着模仿输出纯文本，真正的工具就不再被触发。
+    // 本地工具协议：AI 在回复里单独占一行输出 {"name":...,"arguments":{...}}（JSONL，一行一个调用），
+    // 这些行原样保留在正文里显示给用户，回复结束后再逐行解析执行；执行结果只通过页面状态临时提示，不写进正文。
+    // 兼容旧格式：模型仍输出 <tool_call>…</tool_call> 时，标签内的 JSON 同样会被执行（标签也不再剥掉）。
     private suspend fun executeToolCalls(deps: ProjectChatDeps, projectId: Long, replyText: String): String {
-        var result = replyText
-        var guard = 0
-        while (guard < 10) {
-            guard++
-            val startTag = "<tool_call>"
-            val endTag = "</tool_call>"
-            val startIndex = result.indexOf(startTag)
-            if (startIndex < 0) {
-                break
-            }
-            val endIndex = result.indexOf(endTag, startIndex)
-            // 标签没闭合（流式截断、模型漏写结尾）时，把开始标签及之后的内容整段丢掉，别让指令文本留在正文里
-            if (endIndex < 0) {
-                result = result.substring(0, startIndex).trim()
-                break
-            }
-            val toolText = result.substring(startIndex + startTag.length, endIndex).trim()
-            result = (result.substring(0, startIndex) + result.substring(endIndex + endTag.length)).trim()
+        val messages = mutableListOf<String>()
+        var executed = 0
+        for (toolJson in parseToolCalls(replyText)) {
+            if (executed >= 10) break
+            executed++
             val toolMessage = try {
-                val toolJson = JSONObject(toolText)
                 when (toolJson.optString("name")) {
                     "set_next_resume_time" -> executeSetNextResumeTime(deps, projectId, toolJson)
                     "complete_daily_challenge" -> executeCompleteDailyChallenge(deps, projectId, toolJson)
@@ -611,11 +590,31 @@ object ChatExecutor {
             } catch (e: Exception) {
                 "工具调用失败：时间或 JSON 格式不正确。"
             }
-            if (toolMessage.isNotEmpty()) {
-                update(projectId) { it.copy(errorMessage = toolMessage) }
-            }
+            if (toolMessage.isNotEmpty()) messages.add(toolMessage)
         }
-        return result
+        if (messages.isNotEmpty()) {
+            update(projectId) { it.copy(errorMessage = messages.joinToString("\n")) }
+        }
+        return replyText.trim()
+    }
+
+    // 从回复里逐行找出工具调用 JSON：每行取第一个 '{' 到最后一个 '}' 尝试解析，
+    // 只认 name 属于已知工具的对象，避免把正文里普通的花括号误当成调用。
+    private fun parseToolCalls(replyText: String): List<JSONObject> {
+        val calls = mutableListOf<JSONObject>()
+        replyText.replace("<tool_call>", "\n").replace("</tool_call>", "\n").lines().forEach { rawLine ->
+            val line = rawLine.trim()
+            val startIndex = line.indexOf('{')
+            val endIndex = line.lastIndexOf('}')
+            if (startIndex < 0 || endIndex <= startIndex) return@forEach
+            val json = try {
+                JSONObject(line.substring(startIndex, endIndex + 1))
+            } catch (e: Exception) {
+                return@forEach
+            }
+            if (json.optString("name") in TOOL_NAMES) calls.add(json)
+        }
+        return calls
     }
 
     // 执行“强制指定下次汇报时间”工具，返回给用户看的执行结果提示。
