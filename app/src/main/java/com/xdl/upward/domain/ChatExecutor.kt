@@ -37,7 +37,6 @@ import java.time.OffsetDateTime
 object ChatExecutor {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val WEEKDAYS = listOf("周一", "周二", "周三", "周四", "周五", "周六", "周日")
-    private val TOOL_NAMES = setOf("set_next_resume_time", "complete_daily_challenge")
 
     data class ProjectChatState(
         val loading: Boolean = false,
@@ -595,7 +594,7 @@ object ChatExecutor {
                 when (toolJson.optString("name")) {
                     "set_next_resume_time" -> executeSetNextResumeTime(deps, projectId, toolJson)
                     "complete_daily_challenge" -> executeCompleteDailyChallenge(deps, projectId, toolJson)
-                    else -> ""
+                    else -> "工具调用失败：未知工具 ${toolJson.optString("name")}。"
                 }
             } catch (e: Exception) {
                 "工具调用失败：时间或 JSON 格式不正确。"
@@ -609,7 +608,8 @@ object ChatExecutor {
     }
 
     // 从回复里逐行找出工具调用 JSON：每行取第一个 '{' 到最后一个 '}' 尝试解析，
-    // 只认 name 属于已知工具的对象，避免把正文里普通的花括号误当成调用。
+    // 按结构识别（有非空 name 字段的 JSON 对象即视为工具调用），不在这里维护工具名单；
+    // 新增工具只需在 executeToolCalls 的 when 里加分支，未知工具名会提示失败而不是被静默忽略。
     private fun parseToolCalls(replyText: String): List<JSONObject> {
         val calls = mutableListOf<JSONObject>()
         replyText.replace("<tool_call>", "\n").replace("</tool_call>", "\n").lines().forEach { rawLine ->
@@ -622,7 +622,7 @@ object ChatExecutor {
             } catch (e: Exception) {
                 return@forEach
             }
-            if (json.optString("name") in TOOL_NAMES) calls.add(json)
+            if (json.optString("name").isNotBlank()) calls.add(json)
         }
         return calls
     }
