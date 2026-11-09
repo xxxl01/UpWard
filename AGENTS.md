@@ -30,6 +30,7 @@ Android 原生单模块应用（`:app`，包名 `com.xdl.upward`）：按项目�
   - 挑战失败惩罚固定为捐款 3 元（`ChallengeViewModel.FIXED_FAIL_PENALTY`），通过后该挑战 failed → settled，并把结算当天（在挑战周期内时）自动记为已打卡，避免当天一直悬着“未打卡”（违规惩罚连带结算同样处理）；AI 不能结算挑战（已移除 `settle_failed_challenge` 工具）。
   - 违规惩罚通过后违规次数 -10（降到 10 次以下才解除），并调用 `ChallengeRepository.settleAllFailed()` 一并结算所有失败中的挑战（结算前会补做缺卡检测）。已移除违规告诫 AI 对话与 `reset_violation_count` 工具。
   - 识别用当前选中的 API（需 `supportImage`），否则用其视觉辅助模型；都没有则直接报错。
+- 请假：违规惩罚页标题栏的请假按钮（`ViolationChatViewModel.requestLeave`），每个自然周（周一~周日，凌晨 4 点换日）一次，记录在 config `leave_last_date`。效果是清除所有项目的汇报窗口并取消提醒；清除前先对每个项目跑 `RequiredMessageDeadlineHandler.checkAndRecord`，已过期未汇报的窗口照常记违规；没有窗口可清时不消耗次数。
 - 挑战可设过渡期：`challenge.transition_end_date`（含当天，空 = 无过渡期，范围 开始日期 ≤ x < 截止日期）。今天处于过渡期时，`ChatExecutor.buildChallengeSystemMessage` 会在提示词里写明“日期1 ~ 日期2 是过渡期，今天是 xxx，属于过渡期”。已开始的挑战只能提前结束或取消过渡期，不能新增或延长。
 - 全局提醒时间存在 config 表：`global_reminder_morning_time` / `afternoon` / `evening`（默认 07:00 / 13:00 / 19:30）；`reminder/GlobalReminderScheduler.kt` 用 `setExactAndAllowWhileIdle` 排程，Android 13+ 需要用户授予精确闹钟权限。`MainActivity.onCreate` 会初始化 config 并 reschedule。
 - Manifest 已开 `usesCleartextTraffic="true"`，允许 http 明文 AI 接口（局域网/127.0.0.1 地址）。

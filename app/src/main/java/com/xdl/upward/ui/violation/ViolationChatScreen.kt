@@ -23,14 +23,19 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -54,6 +59,9 @@ fun ViolationChatScreen(
     val verifying by viewModel.verifying.collectAsStateWithLifecycle()
     val errorMessage by viewModel.errorMessage.collectAsStateWithLifecycle()
     val noticeMessage by viewModel.noticeMessage.collectAsStateWithLifecycle()
+    val leaveDateThisWeek by viewModel.leaveDateThisWeek.collectAsStateWithLifecycle()
+    val leaving by viewModel.leaving.collectAsStateWithLifecycle()
+    var leaveDialogVisible by remember { mutableStateOf(false) }
     val pickerLauncher = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
         if (uri != null) viewModel.submitPayment(uri)
     }
@@ -65,7 +73,13 @@ fun ViolationChatScreen(
             .background(MaterialTheme.colorScheme.background)
             .windowInsetsPadding(WindowInsets.statusBars)
     ) {
-        ViolationHeaderBar(title = "违规惩罚 $violationCount 次", onBack = onBack)
+        ViolationHeaderBar(
+            title = "违规惩罚 $violationCount 次",
+            onBack = onBack,
+            leaveAvailable = leaveDateThisWeek.isEmpty(),
+            leaveEnabled = !leaving,
+            onLeave = { leaveDialogVisible = true }
+        )
 
         LazyColumn(
             modifier = Modifier
@@ -135,12 +149,54 @@ fun ViolationChatScreen(
             }
         }
     }
+
+    if (leaveDialogVisible) {
+        AlertDialog(
+            onDismissRequest = { leaveDialogVisible = false },
+            title = { Text("请假") },
+            text = {
+                Text(
+                    if (leaveDateThisWeek.isEmpty()) {
+                        "请假会清除所有项目当前的汇报窗口，本周（周一到周日）只能请假一次。已经过期未汇报的窗口仍会照常记违规。确认请假？"
+                    } else {
+                        "本周已经在 $leaveDateThisWeek 请过假了，下周一凌晨 4 点后可再次请假。"
+                    }
+                )
+            },
+            confirmButton = {
+                if (leaveDateThisWeek.isEmpty()) {
+                    TextButton(
+                        onClick = {
+                            leaveDialogVisible = false
+                            viewModel.requestLeave()
+                        }
+                    ) {
+                        Text("确认请假")
+                    }
+                } else {
+                    TextButton(onClick = { leaveDialogVisible = false }) {
+                        Text("知道了")
+                    }
+                }
+            },
+            dismissButton = {
+                if (leaveDateThisWeek.isEmpty()) {
+                    TextButton(onClick = { leaveDialogVisible = false }) {
+                        Text("取消")
+                    }
+                }
+            }
+        )
+    }
 }
 
 @Composable
 private fun ViolationHeaderBar(
     title: String,
-    onBack: () -> Unit
+    onBack: () -> Unit,
+    leaveAvailable: Boolean,
+    leaveEnabled: Boolean,
+    onLeave: () -> Unit
 ) {
     Column(
         modifier = Modifier
@@ -177,6 +233,21 @@ private fun ViolationHeaderBar(
                     .weight(1f)
                     .padding(horizontal = 8.dp)
             )
+            Box(
+                modifier = Modifier
+                    .size(40.dp)
+                    .clip(CircleShape)
+                    .clickable(enabled = leaveEnabled) { onLeave() },
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    painter = painterResource(LucideR.drawable.lucide_ic_calendar_off),
+                    contentDescription = "请假",
+                    // 本周还能请假时高亮，已用完时置灰（仍可点开查看说明）
+                    tint = if (leaveAvailable) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+                    modifier = Modifier.size(22.dp)
+                )
+            }
         }
         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
     }
