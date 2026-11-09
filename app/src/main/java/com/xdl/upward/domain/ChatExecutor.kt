@@ -18,11 +18,13 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
 import java.time.DayOfWeek
@@ -273,9 +275,17 @@ object ChatExecutor {
                 }
                 sendCompleted = true
             } catch (e: CancellationException) {
-                // 用户点击停止时保留已经收到的流式内容，不提示为错误。
+                // 用户点击停止时保留已经收到的流式内容，不提示为错误；但不算完成汇报，恢复汇报窗口。
+                // 协程已被取消，落库必须放进 NonCancellable，否则挂起调用会直接抛出。
+                if (shouldRestoreRequiredTime && !sendCompleted) {
+                    withContext(NonCancellable) {
+                        deps.repository.setNextRequiredMessagePeriod(projectId, originalRequiredMessageStartAt, originalRequiredMessageEndAt)
+                        RequiredMessageReminderScheduler.schedule(deps.appContext, projectId, originalRequiredMessageStartAt, originalRequiredMessageEndAt)
+                    }
+                }
+                throw e
             } catch (e: Exception) {
-                // 请求失败时恢复汇报窗口，不能白白算作已汇报（用户主动停止不恢复，与原逻辑一致）。
+                // 请求失败时恢复汇报窗口，不能白白算作已汇报。
                 if (shouldRestoreRequiredTime && !sendCompleted) {
                     deps.repository.setNextRequiredMessagePeriod(projectId, originalRequiredMessageStartAt, originalRequiredMessageEndAt)
                     RequiredMessageReminderScheduler.schedule(deps.appContext, projectId, originalRequiredMessageStartAt, originalRequiredMessageEndAt)
