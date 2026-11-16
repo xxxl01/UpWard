@@ -3,6 +3,8 @@ package com.xdl.upward.receiver
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import com.xdl.upward.domain.DailyStatusRecorder
+import com.xdl.upward.reminder.DailyStatusScheduler
 import com.xdl.upward.reminder.GlobalReminderScheduler
 import com.xdl.upward.reminder.RequiredMessageReminderScheduler
 import com.xdl.upward.service.KeepAliveService
@@ -27,6 +29,8 @@ class UpdateReceiver : BroadcastReceiver() {
             try {
                 RequiredMessageReminderScheduler.rescheduleAll(context.applicationContext)
                 GlobalReminderScheduler.reschedule(context.applicationContext)
+                DailyStatusScheduler.scheduleNext(context.applicationContext)
+                DailyStatusRecorder.sync(context.applicationContext)
             } finally {
                 pendingResult.finish()
             }

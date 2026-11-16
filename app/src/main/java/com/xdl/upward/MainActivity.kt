@@ -11,6 +11,8 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
 import com.xdl.upward.data.local.AppDatabase
 import com.xdl.upward.data.local.ConfigEntity
+import com.xdl.upward.domain.DailyStatusRecorder
+import com.xdl.upward.reminder.DailyStatusScheduler
 import com.xdl.upward.reminder.GlobalReminderScheduler
 import com.xdl.upward.service.KeepAliveService
 import com.xdl.upward.ui.navigation.AppNavGraph
@@ -29,6 +31,8 @@ class MainActivity : ComponentActivity() {
                 configDao.insert(ConfigEntity(key = "initial_date", value = LocalDate.now().toString()))
             }
             GlobalReminderScheduler.reschedule(applicationContext)
+            DailyStatusScheduler.scheduleNext(applicationContext)
+            DailyStatusRecorder.sync(applicationContext)
         }
         // 后台常驻服务开关开启时，每次启动 App 都拉起它：
         // 覆盖安装/系统清理会杀掉进程，只有打开 App 时才能可靠恢复常驻保护

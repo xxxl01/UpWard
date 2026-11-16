@@ -58,6 +58,9 @@
             android:name=".reminder.RequiredMessageReminderReceiver"
             android:exported="false" />
         <receiver
+            android:name=".reminder.DailyStatusReceiver"
+            android:exported="false" />
+        <receiver
             android:name=".reminder.GlobalReminderReceiver"
             android:exported="false" />
     </application>
