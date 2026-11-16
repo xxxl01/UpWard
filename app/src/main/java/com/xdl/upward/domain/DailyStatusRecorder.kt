@@ -53,7 +53,7 @@ object DailyStatusRecorder {
     }
 
     /**
-     * 违规规则：每一次失败/缺卡（daily_status 里一个 failed 的时段，不含挑战）记一次违规，每日没有上限。
+     * 违规规则：每一次失败/缺卡（daily_status 里一个 failed 的时段，含挑战缺卡；挑战因缺卡被判失败本身不再额外记违规）记一次违规，每日没有上限。
      * 起算日 violation_from_date 第一次取旧规则的 violation_checked_date（该日之前已按旧规则计过），
      * 避免升级后把历史失败重复算一遍。ref_key 唯一，重复同步不会重复入账。
      */
@@ -73,6 +73,7 @@ object DailyStatusRecorder {
                 "morning" -> "上午"
                 "afternoon" -> "下午"
                 "evening" -> "晚上"
+                "challenge" -> "挑战"
                 else -> "每日"
             }
             violationDao.insert(
@@ -81,7 +82,7 @@ object DailyStatusRecorder {
                     source = "checkin",
                     projectId = row.projectId,
                     date = row.date,
-                    detail = "「$name」$label 未汇报",
+                    detail = if (row.component == "challenge") "「$name」挑战缺卡" else "「$name」$label 未汇报",
                     createdAt = now
                 )
             )

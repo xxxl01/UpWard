@@ -171,7 +171,7 @@ class ProjectListViewModel(application: Application) : AndroidViewModel(applicat
             return
         }
 
-        // 违规记录不在这里产生：一次缺卡/失败记一次，由 DailyStatusRecorder.sync 从 daily_status 的失败记录生成。
+        // 违规记录不在这里产生：一次缺卡/失败记一次（含挑战缺卡），由 DailyStatusRecorder.sync 从 daily_status 的失败记录生成。
         // 这里只负责挑战：昨天处于挑战模式且缺卡时，把 active 挑战判为失败。
         val yesterday = today.minusDays(1)
         for (project in repository.getProjects()) {
