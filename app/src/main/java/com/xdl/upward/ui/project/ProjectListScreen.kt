@@ -52,6 +52,7 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.composables.icons.lucide.R as LucideR
 import com.xdl.upward.data.local.ProjectEntity
+import java.time.LocalDate
 
 @Composable
 fun ProjectListScreen(
@@ -63,12 +64,11 @@ fun ProjectListScreen(
 ) {
     val projects by viewModel.projects.collectAsStateWithLifecycle(initialValue = emptyList())
     val violationCount by viewModel.violationCount.collectAsStateWithLifecycle()
-    val projectYesterdayStatuses by viewModel.projectYesterdayStatuses.collectAsStateWithLifecycle()
-    val projectTodayStatuses by viewModel.projectTodayStatuses.collectAsStateWithLifecycle()
+    val dayStatuses by viewModel.dayStatuses.collectAsStateWithLifecycle()
+    val selectedDate by viewModel.selectedDate.collectAsStateWithLifecycle()
     val globalReminderStatuses by viewModel.globalReminderStatuses.collectAsStateWithLifecycle()
     val lifecycleOwner = LocalLifecycleOwner.current
-    var showYesterdayStatusDialog by remember { mutableStateOf(false) }
-    var showTodayStatusDialog by remember { mutableStateOf(false) }
+    var showStatusDialog by remember { mutableStateOf(false) }
 
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
@@ -91,13 +91,9 @@ fun ProjectListScreen(
     ) {
         ProjectListHeader(
             violationCount = violationCount,
-            onShowTodayStatus = {
-                viewModel.loadProjectTodayStatuses()
-                showTodayStatusDialog = true
-            },
-            onShowYesterdayStatus = {
-                viewModel.loadProjectYesterdayStatuses()
-                showYesterdayStatusDialog = true
+            onShowStatus = {
+                viewModel.selectToday()
+                showStatusDialog = true
             },
             onOpenViolationChat = onOpenViolationChat,
             onOpenConfigSettings = onOpenConfigSettings,
@@ -128,18 +124,15 @@ fun ProjectListScreen(
         )
     }
 
-    if (showYesterdayStatusDialog) {
+    if (showStatusDialog) {
+        val today = viewModel.todayCheckInDate()
         ProjectDayStatusDialog(
-            title = "昨日打卡状态",
-            statuses = projectYesterdayStatuses,
-            onDismiss = { showYesterdayStatusDialog = false }
-        )
-    }
-    if (showTodayStatusDialog) {
-        ProjectDayStatusDialog(
-            title = "今日完成情况",
-            statuses = projectTodayStatuses,
-            onDismiss = { showTodayStatusDialog = false }
+            date = selectedDate,
+            isToday = !selectedDate.isBefore(today),
+            statuses = dayStatuses,
+            onPrev = { viewModel.shiftSelectedDate(-1) },
+            onNext = { viewModel.shiftSelectedDate(1) },
+            onDismiss = { showStatusDialog = false }
         )
     }
 }
@@ -147,8 +140,7 @@ fun ProjectListScreen(
 @Composable
 private fun ProjectListHeader(
     violationCount: Int,
-    onShowTodayStatus: () -> Unit,
-    onShowYesterdayStatus: () -> Unit,
+    onShowStatus: () -> Unit,
     onOpenViolationChat: () -> Unit,
     onOpenConfigSettings: () -> Unit,
     onCreateProject: () -> Unit
@@ -182,16 +174,10 @@ private fun ProjectListHeader(
             )
             Spacer(modifier = Modifier.width(4.dp))
             HeaderIconButton(
-                icon = LucideR.drawable.lucide_ic_circle_check,
-                contentDescription = "今日完成情况",
-                onClick = onShowTodayStatus,
-                iconTint = Color(0xFF2E7D32)
-            )
-            Spacer(modifier = Modifier.width(4.dp))
-            HeaderIconButton(
                 icon = LucideR.drawable.lucide_ic_calendar,
-                contentDescription = "昨日打卡状态",
-                onClick = onShowYesterdayStatus
+                contentDescription = "每日完成情况",
+                onClick = onShowStatus,
+                iconTint = Color(0xFF2E7D32)
             )
             Spacer(modifier = Modifier.width(4.dp))
             HeaderIconButton(
@@ -266,13 +252,42 @@ private fun violationBadgeColor(violationCount: Int, errorColor: Color): Color =
 
 @Composable
 private fun ProjectDayStatusDialog(
-    title: String,
+    date: LocalDate,
+    isToday: Boolean,
     statuses: List<ProjectYesterdayCheckStatus>,
+    onPrev: () -> Unit,
+    onNext: () -> Unit,
     onDismiss: () -> Unit
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text(title) },
+        title = {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                HeaderIconButton(
+                    icon = LucideR.drawable.lucide_ic_chevron_left,
+                    contentDescription = "前一天",
+                    onClick = onPrev
+                )
+                Text(
+                    text = if (isToday) "$date 今天" else date.toString(),
+                    style = MaterialTheme.typography.titleMedium,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.weight(1f)
+                )
+                if (isToday) {
+                    Spacer(modifier = Modifier.size(40.dp))
+                } else {
+                    HeaderIconButton(
+                        icon = LucideR.drawable.lucide_ic_chevron_right,
+                        contentDescription = "后一天",
+                        onClick = onNext
+                    )
+                }
+            }
+        },
         text = {
             Column(
                 modifier = Modifier

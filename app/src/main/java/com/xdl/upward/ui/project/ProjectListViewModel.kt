@@ -5,6 +5,7 @@ import android.app.AlarmManager
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.xdl.upward.data.local.AppDatabase
+import com.xdl.upward.data.local.DailyStatusEntity
 import com.xdl.upward.data.local.ProjectEntity
 import com.xdl.upward.data.repository.ConfigRepository
 import com.xdl.upward.data.repository.ChallengeRepository
@@ -60,11 +61,11 @@ class ProjectListViewModel(application: Application) : AndroidViewModel(applicat
     private val _violationCount = MutableStateFlow(0)
     val violationCount: StateFlow<Int> = _violationCount.asStateFlow()
 
-    private val _projectYesterdayStatuses = MutableStateFlow<List<ProjectYesterdayCheckStatus>>(emptyList())
-    val projectYesterdayStatuses: StateFlow<List<ProjectYesterdayCheckStatus>> = _projectYesterdayStatuses.asStateFlow()
+    private val _selectedDate = MutableStateFlow(challengeRepository.currentCheckInDate())
+    val selectedDate: StateFlow<LocalDate> = _selectedDate.asStateFlow()
 
-    private val _projectTodayStatuses = MutableStateFlow<List<ProjectYesterdayCheckStatus>>(emptyList())
-    val projectTodayStatuses: StateFlow<List<ProjectYesterdayCheckStatus>> = _projectTodayStatuses.asStateFlow()
+    private val _dayStatuses = MutableStateFlow<List<ProjectYesterdayCheckStatus>>(emptyList())
+    val dayStatuses: StateFlow<List<ProjectYesterdayCheckStatus>> = _dayStatuses.asStateFlow()
 
     private val _globalReminderStatuses = MutableStateFlow(
         listOf(
@@ -113,8 +114,9 @@ class ProjectListViewModel(application: Application) : AndroidViewModel(applicat
         viewModelScope.launch {
             checkRequiredMessageDeadlines()
             checkViolation()
-            loadProjectTodayStatuses()
-            loadProjectYesterdayStatuses()
+            // 先把昨天落库（昨天已结束，会定成成功/失败），再回到今天
+            computeAndPersistDayStatuses(challengeRepository.currentCheckInDate().minusDays(1))
+            selectToday()
         }
     }
 
@@ -127,156 +129,110 @@ class ProjectListViewModel(application: Application) : AndroidViewModel(applicat
         }
     }
 
-    fun loadProjectYesterdayStatuses() {
+    /** 加载并持久化指定打卡日的达标情况；结果通过 [dayStatuses] 发布。 */
+    fun loadDayStatuses(date: LocalDate) {
+        _selectedDate.value = date
         viewModelScope.launch {
-            val checkInToday = challengeRepository.currentCheckInDate()
-            val yesterday = checkInToday.minusDays(1)
-            val now = OffsetDateTime.now()
-            val yesterdayStartTime = yesterday.atTime(4, 0).atOffset(now.offset)
-            val morningStartTime = yesterday.atTime(4, 0).atOffset(now.offset)
-            val noonStartTime = yesterday.atTime(13, 0).atOffset(now.offset)
-            val eveningStartTime = yesterday.atTime(19, 30).atOffset(now.offset)
-            val dailyStart = yesterdayStartTime.toString()
-            val morningStart = morningStartTime.toString()
-            val noonStart = noonStartTime.toString()
-            val eveningStart = eveningStartTime.toString()
-            val todayStartTime = checkInToday.atTime(4, 0).atOffset(now.offset)
-            val todayStart = todayStartTime.toString()
-            val initialDate = configRepository.getValue("initial_date")?.let { value ->
-                try {
-                    LocalDate.parse(value)
-                } catch (e: Exception) {
-                    checkInToday
-                }
-            } ?: checkInToday
-            val items = repository.getProjects().map { project ->
-                val challenge = challengeRepository.challengeOfDate(project.id, yesterday)
-                if (challenge != null) {
-                    val done = challengeRepository.getCheckIns(challenge.id).any { it.date == yesterday.toString() }
-                    return@map ProjectYesterdayCheckStatus(project.name, "challenge", done, null, null, !done, true)
-                }
-                val projectCreatedAt = try {
-                    OffsetDateTime.parse(project.createdAt)
-                } catch (e: Exception) {
-                    now
-                }
-                if (project.checkInMode == "once_per_day") {
-                    val shouldCheckDaily = initialDate.isBefore(yesterday) && projectCreatedAt.isBefore(todayStartTime)
-                    val hasDailyMessage = if (shouldCheckDaily) messageRepository.hasUserMessagesBetween(project.id, dailyStart, todayStart) else true
-                    ProjectYesterdayCheckStatus(
-                        projectName = project.name,
-                        checkInMode = project.checkInMode,
-                        hasMorningMessage = hasDailyMessage,
-                        hasAfternoonMessage = null,
-                        hasEveningMessage = null,
-                        isViolation = shouldCheckDaily && !hasDailyMessage
-                    )
-                } else {
-                    val shouldCheckMorning = initialDate.isBefore(yesterday) && !projectCreatedAt.isAfter(morningStartTime)
-                    val shouldCheckAfternoon = initialDate.isBefore(yesterday) && !projectCreatedAt.isAfter(noonStartTime)
-                    val shouldCheckEvening = initialDate.isBefore(yesterday) && !projectCreatedAt.isAfter(eveningStartTime)
-                    val hasMorningMessage = if (shouldCheckMorning) messageRepository.hasUserMessagesBetween(project.id, morningStart, noonStart) else true
-                    val hasAfternoonMessage = if (shouldCheckAfternoon) messageRepository.hasUserMessagesBetween(project.id, noonStart, eveningStart) else true
-                    val hasEveningMessage = if (shouldCheckEvening) messageRepository.hasUserMessagesBetween(project.id, eveningStart, todayStart) else true
-                    ProjectYesterdayCheckStatus(
-                        projectName = project.name,
-                        checkInMode = project.checkInMode,
-                        hasMorningMessage = hasMorningMessage,
-                        hasAfternoonMessage = hasAfternoonMessage,
-                        hasEveningMessage = hasEveningMessage,
-                        isViolation = (shouldCheckMorning && !hasMorningMessage) ||
-                            (shouldCheckAfternoon && !hasAfternoonMessage) ||
-                            (shouldCheckEvening && !hasEveningMessage)
-                    )
-                }
-            }
-            _projectYesterdayStatuses.value = items
+            val items = computeAndPersistDayStatuses(date)
+            if (_selectedDate.value == date) _dayStatuses.value = items
         }
     }
 
-    fun loadProjectTodayStatuses() {
-        viewModelScope.launch {
-            val today = challengeRepository.currentCheckInDate()
-            val tomorrow = today.plusDays(1)
-            val now = OffsetDateTime.now()
-            val dailyStartTime = today.atTime(4, 0).atOffset(now.offset)
-            val morningStartTime = today.atTime(4, 0).atOffset(now.offset)
-            val noonStartTime = today.atTime(13, 0).atOffset(now.offset)
-            val eveningStartTime = today.atTime(19, 30).atOffset(now.offset)
-            val tomorrowStartTime = tomorrow.atTime(4, 0).atOffset(now.offset)
-            val dailyStart = dailyStartTime.toString()
-            val morningStart = morningStartTime.toString()
-            val noonStart = noonStartTime.toString()
-            val eveningStart = eveningStartTime.toString()
-            val tomorrowStart = tomorrowStartTime.toString()
-            val items = repository.getProjects().map { project ->
-                val challenge = challengeRepository.challengeOfDate(project.id, today)
-                if (challenge != null) {
-                    val hasMessage = if (!now.isBefore(dailyStartTime)) {
-                        challengeRepository.getCheckIns(challenge.id).any { it.date == today.toString() }
-                    } else {
-                        false
-                    }
-                    return@map ProjectYesterdayCheckStatus(project.name, "challenge", if (hasMessage) true else null, null, null, false, true)
-                }
-                val projectCreatedAt = try {
-                    OffsetDateTime.parse(project.createdAt)
-                } catch (e: Exception) {
-                    now
-                }
-                if (project.checkInMode == "once_per_day") {
-                    val hasMessage = if (!now.isBefore(dailyStartTime)) {
-                        messageRepository.hasUserMessagesBetween(project.id, dailyStart, tomorrowStart)
-                    } else {
-                        false
-                    }
-                    val hasDailyMessage = if (hasMessage) true else null
-                    ProjectYesterdayCheckStatus(
-                        projectName = project.name,
-                        checkInMode = project.checkInMode,
-                        hasMorningMessage = hasDailyMessage,
-                        hasAfternoonMessage = null,
-                        hasEveningMessage = null,
-                        isViolation = false
-                    )
-                } else {
-                    val shouldCheckMorning = !now.isBefore(noonStartTime) && !projectCreatedAt.isAfter(morningStartTime)
-                    val shouldCheckAfternoon = !now.isBefore(eveningStartTime) && !projectCreatedAt.isAfter(noonStartTime)
-                    val shouldCheckEvening = !now.isBefore(tomorrowStartTime) && !projectCreatedAt.isAfter(eveningStartTime)
-                    val shouldShowMorningDone = !now.isBefore(morningStartTime) && !projectCreatedAt.isAfter(morningStartTime)
-                    val shouldShowAfternoonDone = !now.isBefore(noonStartTime) && !projectCreatedAt.isAfter(noonStartTime)
-                    val shouldShowEveningDone = !now.isBefore(eveningStartTime) && !projectCreatedAt.isAfter(eveningStartTime)
-                    val hasMorningMessage = if (shouldShowMorningDone) {
-                        val hasMessage = messageRepository.hasUserMessagesBetween(project.id, morningStart, noonStart)
-                        if (hasMessage || shouldCheckMorning) hasMessage else null
-                    } else {
-                        null
-                    }
-                    val hasAfternoonMessage = if (shouldShowAfternoonDone) {
-                        val hasMessage = messageRepository.hasUserMessagesBetween(project.id, noonStart, eveningStart)
-                        if (hasMessage || shouldCheckAfternoon) hasMessage else null
-                    } else {
-                        null
-                    }
-                    val hasEveningMessage = if (shouldShowEveningDone) {
-                        val hasMessage = messageRepository.hasUserMessagesBetween(project.id, eveningStart, tomorrowStart)
-                        if (hasMessage || shouldCheckEvening) hasMessage else null
-                    } else {
-                        null
-                    }
-                    ProjectYesterdayCheckStatus(
-                        projectName = project.name,
-                        checkInMode = project.checkInMode,
-                        hasMorningMessage = hasMorningMessage,
-                        hasAfternoonMessage = hasAfternoonMessage,
-                        hasEveningMessage = hasEveningMessage,
-                        isViolation = (shouldCheckMorning && hasMorningMessage == false) ||
-                            (shouldCheckAfternoon && hasAfternoonMessage == false) ||
-                            (shouldCheckEvening && hasEveningMessage == false)
-                    )
-                }
+    fun todayCheckInDate(): LocalDate = challengeRepository.currentCheckInDate()
+
+    fun selectToday() = loadDayStatuses(challengeRepository.currentCheckInDate())
+
+    fun shiftSelectedDate(days: Long) {
+        val today = challengeRepository.currentCheckInDate()
+        val target = _selectedDate.value.plusDays(days)
+        loadDayStatuses(if (target.isAfter(today)) today else target)
+    }
+
+    /**
+     * 计算某个打卡日各项目各组件的状态（true 成功 / false 失败 / null 待定或不适用），
+     * 并写入 daily_status：库里已是成功/失败的直接沿用，不再重算；待定只会被升级为成功/失败。
+     */
+    private suspend fun computeAndPersistDayStatuses(date: LocalDate): List<ProjectYesterdayCheckStatus> {
+        val dao = database.dailyStatusDao()
+        val saved = dao.getByDate(date.toString())
+            .associateBy { it.projectId to it.component }
+        val now = OffsetDateTime.now()
+        val offset = now.offset
+        val dayStart = date.atTime(4, 0).atOffset(offset)
+        val noon = date.atTime(13, 0).atOffset(offset)
+        val evening = date.atTime(19, 30).atOffset(offset)
+        val dayEnd = date.plusDays(1).atTime(4, 0).atOffset(offset)
+        val initialDate = configRepository.getValue("initial_date")?.let {
+            try { LocalDate.parse(it) } catch (e: Exception) { null }
+        } ?: challengeRepository.currentCheckInDate()
+
+        // 返回 Pair(是否适用, 状态)；start/end 为该时段窗口。
+        suspend fun windowStatus(
+            projectId: Long,
+            component: String,
+            type: String,
+            created: OffsetDateTime,
+            start: OffsetDateTime,
+            end: OffsetDateTime
+        ): Boolean? {
+            val old = saved[projectId to component]
+            if (old != null && old.status != DailyStatusEntity.PENDING) {
+                return old.status == DailyStatusEntity.SUCCESS
             }
-            _projectTodayStatuses.value = items
+            if (now.isBefore(start)) return null
+            if (created.isAfter(start) && component != "daily") return null
+            val ended = !now.isBefore(end)
+            if (ended && !initialDate.isBefore(date)) return null
+            if (ended && component == "daily" && !created.isBefore(end)) return null
+            val has = messageRepository.hasUserMessagesBetween(projectId, start.toString(), end.toString())
+            val result: Boolean? = if (has) true else if (ended) false else null
+            dao.record(
+                projectId, date.toString(), component, type,
+                when (result) {
+                    true -> DailyStatusEntity.SUCCESS
+                    false -> DailyStatusEntity.FAILED
+                    null -> DailyStatusEntity.PENDING
+                }
+            )
+            return result
+        }
+
+        return repository.getProjects().map { project ->
+            val challenge = challengeRepository.challengeOfDate(project.id, date)
+            if (challenge != null) {
+                val old = saved[project.id to "challenge"]
+                val result: Boolean? = if (old != null && old.status != DailyStatusEntity.PENDING) {
+                    old.status == DailyStatusEntity.SUCCESS
+                } else if (now.isBefore(dayStart)) {
+                    null
+                } else {
+                    val done = challengeRepository.getCheckIns(challenge.id).any { it.date == date.toString() }
+                    val r: Boolean? = if (done) true else if (!now.isBefore(dayEnd)) false else null
+                    dao.record(
+                        project.id, date.toString(), "challenge", "challenge",
+                        when (r) {
+                            true -> DailyStatusEntity.SUCCESS
+                            false -> DailyStatusEntity.FAILED
+                            null -> DailyStatusEntity.PENDING
+                        }
+                    )
+                    r
+                }
+                return@map ProjectYesterdayCheckStatus(project.name, "challenge", result, null, null, result == false, true)
+            }
+            val created = try { OffsetDateTime.parse(project.createdAt) } catch (e: Exception) { now }
+            if (project.checkInMode == "once_per_day") {
+                val r = windowStatus(project.id, "daily", "once_per_day", created, dayStart, dayEnd)
+                ProjectYesterdayCheckStatus(project.name, project.checkInMode, r, null, null, r == false)
+            } else {
+                val m = windowStatus(project.id, "morning", "three_times", created, dayStart, noon)
+                val a = windowStatus(project.id, "afternoon", "three_times", created, noon, evening)
+                val e = windowStatus(project.id, "evening", "three_times", created, evening, dayEnd)
+                ProjectYesterdayCheckStatus(
+                    project.name, project.checkInMode, m, a, e,
+                    m == false || a == false || e == false
+                )
+            }
         }
     }
 

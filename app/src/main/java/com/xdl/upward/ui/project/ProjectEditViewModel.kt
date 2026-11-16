@@ -110,6 +110,7 @@ class ProjectEditViewModel(application: Application) : AndroidViewModel(applicat
                         database.challengeCheckInDao().deleteByChallengeId(challenge.id)
                     }
                     database.challengeDao().deleteByProjectId(projectId)
+                    database.dailyStatusDao().deleteByProjectId(projectId)
                     database.projectDao().deleteById(projectId)
                 }
                 onDeleted()

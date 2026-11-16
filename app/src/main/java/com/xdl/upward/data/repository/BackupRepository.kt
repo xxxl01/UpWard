@@ -6,6 +6,7 @@ import androidx.room.withTransaction
 import com.xdl.upward.data.local.AiApiEntity
 import com.xdl.upward.data.local.AppDatabase
 import com.xdl.upward.data.local.ChallengeCheckInEntity
+import com.xdl.upward.data.local.DailyStatusEntity
 import com.xdl.upward.data.local.ChallengeEntity
 import com.xdl.upward.data.local.ConfigEntity
 import com.xdl.upward.data.local.DailyRecordEntity
@@ -94,6 +95,7 @@ class BackupRepository(
             .put("challenges", challengesToJson(database.challengeDao().getAllForBackup()))
             .put("challenge_checkins", challengeCheckInsToJson(database.challengeCheckInDao().getAllForBackup()))
             .put("payment_records", paymentRecords)
+            .put("daily_statuses", dailyStatusesToJson(database.dailyStatusDao().getAllForBackup()))
 
         context.contentResolver.openOutputStream(uri)?.use { outputStream ->
             ZipOutputStream(outputStream).use { zip ->
@@ -180,6 +182,7 @@ class BackupRepository(
             database.challengeDao().deleteAll()
             database.challengeCheckInDao().deleteAll()
             database.paymentRecordDao().deleteAll()
+            database.dailyStatusDao().deleteAll()
 
             val projects = readProjects(json.getJSONArray("projects"))
             if (projects.isNotEmpty()) database.projectDao().insertAll(projects)
@@ -197,6 +200,9 @@ class BackupRepository(
             // 旧备份没有 payment_records，optJSONArray 兜底为空
             val paymentRecords = readPaymentRecords(json.optJSONArray("payment_records"), restoredImagePaths)
             if (paymentRecords.isNotEmpty()) database.paymentRecordDao().insertAll(paymentRecords)
+            // 旧备份没有 daily_statuses
+            val dailyStatuses = readDailyStatuses(json.optJSONArray("daily_statuses"))
+            if (dailyStatuses.isNotEmpty()) database.dailyStatusDao().insertAll(dailyStatuses)
         }
     }
 
@@ -444,5 +450,44 @@ class BackupRepository(
             )
         }
         return records
+    }
+
+    private fun dailyStatusesToJson(items: List<DailyStatusEntity>): JSONArray {
+        val array = JSONArray()
+        items.forEach { item ->
+            array.put(
+                JSONObject()
+                    .put("id", item.id)
+                    .put("project_id", item.projectId)
+                    .put("date", item.date)
+                    .put("component", item.component)
+                    .put("type", item.type)
+                    .put("status", item.status)
+                    .put("created_at", item.createdAt)
+                    .put("updated_at", item.updatedAt)
+            )
+        }
+        return array
+    }
+
+    private fun readDailyStatuses(array: JSONArray?): List<DailyStatusEntity> {
+        if (array == null) return emptyList()
+        val items = mutableListOf<DailyStatusEntity>()
+        for (index in 0 until array.length()) {
+            val item = array.getJSONObject(index)
+            items.add(
+                DailyStatusEntity(
+                    id = item.getLong("id"),
+                    projectId = item.getLong("project_id"),
+                    date = item.getString("date"),
+                    component = item.getString("component"),
+                    type = item.getString("type"),
+                    status = item.getString("status"),
+                    createdAt = item.getString("created_at"),
+                    updatedAt = item.optString("updated_at", item.getString("created_at"))
+                )
+            )
+        }
+        return items
     }
 }
