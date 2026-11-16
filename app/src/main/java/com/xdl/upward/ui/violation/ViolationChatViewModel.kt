@@ -55,6 +55,10 @@ class ViolationChatViewModel(application: Application) : AndroidViewModel(applic
         .observeAll()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
+    // 超期罚款（元）：进入惩罚状态后超过一天未捐款，每满一天 +5 元。
+    private val _surchargeYuan = MutableStateFlow(0)
+    val surchargeYuan: StateFlow<Int> = _surchargeYuan.asStateFlow()
+
     private val _verifying = MutableStateFlow(false)
     val verifying: StateFlow<Boolean> = _verifying.asStateFlow()
 
@@ -68,9 +72,16 @@ class ViolationChatViewModel(application: Application) : AndroidViewModel(applic
         viewModelScope.launch {
             AppDatabase.getInstance(application).violationRecordDao().observeActiveCount().collect { value ->
                 _violationCount.value = value
+                refreshSurcharge()
             }
         }
         viewModelScope.launch { refreshLeaveState() }
+    }
+
+    fun refreshSurcharge() {
+        viewModelScope.launch {
+            _surchargeYuan.value = com.xdl.upward.domain.ViolationPenalty.status(getApplication()).surchargeYuan
+        }
     }
 
     private suspend fun refreshLeaveState() {
@@ -135,7 +146,10 @@ class ViolationChatViewModel(application: Application) : AndroidViewModel(applic
                 val context = getApplication<Application>()
                 imagePath = PaymentVerifier.saveImage(context, uri)
                 when (val result = PaymentVerifier.verifyViolationPenalty(context, imagePath)) {
-                    is PaymentVerifier.Result.Accepted -> _noticeMessage.value = result.message
+                    is PaymentVerifier.Result.Accepted -> {
+                        _noticeMessage.value = result.message
+                        refreshSurcharge()
+                    }
                     is PaymentVerifier.Result.Rejected -> {
                         _errorMessage.value = result.message
                         deleteQuietly(imagePath)

@@ -24,11 +24,11 @@ Android 原生单模块应用（`:app`，包名 `com.xdl.upward`）：按项目�
 ## 聊天与 AI
 
 - `domain/ChatExecutor.kt` 是进程级单例：聊天请求生命周期脱离页面，退出聊天页/App 退后台仍会继续流式请求并写库；ViewModel 通过 `observeProjectChat(projectId)` 观察执行状态。改聊天逻辑先看这里。
-- 本地工具协议：AI 在回复末尾输出一个 ` ```jsonl ` 代码块（前端按代码块渲染），块内每行一个 `{"name":"...","arguments":{...}}`，可多行/多个工具（`set_next_resume_time` 强制指定下次汇报时间、`complete_daily_challenge` 挑战打卡）。这些行**原样显示**在聊天里，回复结束后由 `ChatExecutor.executeToolCalls` 逐行解析执行（有 `name` 字段的 JSON 行即视为调用，新增工具只需在 `executeToolCalls` 的 when 里加分支，未知工具名会提示失败；兼容旧 `<tool_call>` 标签），执行结果只走页面临时提示、不写进正文。违规次数 = `violation_record` 表中 `deleted = 0` 的记录数（每次违规一条，`ref_key` 保证幂等；捐款抵扣逻辑删除最早 10 条，月度清零逻辑删除全部有效记录，均保留记录本身；旧的 `config.violation_count` 已在迁移中转成 legacy 记录并删除）。违规规则：每一次缺卡/失败（`daily_status` 里 failed 的时段，含挑战缺卡：缺一天卡记一次违规，挑战因此被判失败本身不再额外记违规）记一次违规，每日无上限，由 `DailyStatusRecorder.sync` 生成（`ref_key = checkin:日期:项目:组件`，起算日 config `violation_from_date`）；错过指定回复时间每个窗口一条。违规页按“违规记录/捐款记录”分 Tab，列表在固定区域内滚动。违规累计 10 次**不再清空数据**，而是进入惩罚状态：拦截所有项目消息发送（ProjectDetailViewModel / ChatExecutor 入口拦截），违规次数达到 10 次后仍继续累加；惩罚状态不受月度清零影响。
+- 本地工具协议：AI 在回复末尾输出一个 ` ```jsonl ` 代码块（前端按代码块渲染），块内每行一个 `{"name":"...","arguments":{...}}`，可多行/多个工具（`set_next_resume_time` 强制指定下次汇报时间、`complete_daily_challenge` 挑战打卡）。这些行**原样显示**在聊天里，回复结束后由 `ChatExecutor.executeToolCalls` 逐行解析执行（有 `name` 字段的 JSON 行即视为调用，新增工具只需在 `executeToolCalls` 的 when 里加分支，未知工具名会提示失败；兼容旧 `<tool_call>` 标签），执行结果只走页面临时提示、不写进正文。违规次数 = `violation_record` 表中 `deleted = 0` 的记录数（每次违规一条，`ref_key` 保证幂等；捐款抵扣（1 元抵 1 次，取整）和周全勤减免（delete_reason = `weekly_reward`）都是逻辑删除最早的有效记录，保留记录本身；**没有**月度自动清零；旧的 `config.violation_count` 已在迁移中转成 legacy 记录并删除）。违规规则：每一次缺卡/失败（`daily_status` 里 failed 的时段，含挑战缺卡：缺一天卡记一次违规，挑战因此被判失败本身不再额外记违规）记一次违规，每日无上限，由 `DailyStatusRecorder.sync` 生成（`ref_key = checkin:日期:项目:组件`，起算日 config `violation_from_date`）；错过指定回复时间每个窗口一条。违规页按“违规记录/捐款记录”分 Tab，列表在固定区域内滚动。违规累计 10 次**不再清空数据**，而是进入惩罚状态：拦截所有项目消息发送（ProjectDetailViewModel / ChatExecutor 入口拦截），违规次数达到 10 次后仍继续累加；惩罚状态不受月度清零影响。
 - 聊天上下文：`AiMessageBuilder.buildChatMessages` 默认附加回复规则（`CHAT_REPLY_RULES`，1~3 句、100 字内，要求有人味、不机械复述用户内容；输入框“闲聊模式”开关、心里话模式、生成日报时不加）；经验记录（每日记录内容以“经验”开头）默认**不**拼进聊天，只有开启经验模式时才带上。
-- **惩罚捐款审核不走 AI 对话**（`domain/PaymentVerifier.kt`）：用户在挑战页 / 违规惩罚页上传捐款截图 → 一次 LLM 调用只识别 JSON（`payment_success`/`order_no`/`amount`/`payee`/`paid_at`/`is_charity`）→ 本地规则判定：支付成功、识别出交易单号、收款方为慈善机构、金额达标（挑战失败惩罚 ≥3 元，违规惩罚 ≥4 元）、单号未用过。通过后在一个事务里写 `payment_record` 并结算；不通过不入库，删除截图。支付时间目前只记录不校验。
+- **惩罚捐款审核不走 AI 对话**（`domain/PaymentVerifier.kt`）：用户在挑战页 / 违规惩罚页上传捐款截图 → 一次 LLM 调用只识别 JSON（`payment_success`/`order_no`/`amount`/`payee`/`paid_at`/`is_charity`）→ 本地规则判定：支付成功、识别出交易单号、收款方为慈善机构、金额达标（挑战失败惩罚 ≥3 元；违规惩罚 ≥ 超期罚款 + 1 元）、单号未用过。通过后在一个事务里写 `payment_record` 并结算；不通过不入库，删除截图。支付时间目前只记录不校验。
   - 挑战失败惩罚固定为捐款 3 元（`ChallengeViewModel.FIXED_FAIL_PENALTY`），通过后该挑战 failed → settled，并把结算当天（在挑战周期内时）自动记为已打卡，避免当天一直悬着“未打卡”（违规惩罚连带结算同样处理）；AI 不能结算挑战（已移除 `settle_failed_challenge` 工具）。
-  - 违规惩罚通过后违规次数 -10（降到 10 次以下才解除），并调用 `ChallengeRepository.settleAllFailed()` 一并结算所有失败中的挑战（结算前会补做缺卡检测）。已移除违规告诫 AI 对话与 `reset_violation_count` 工具。
+  - 违规惩罚通过后：金额取整 N 元，先付清超期罚款，剩余按 1 元抵 1 次逻辑删除最早的有效违规；不再连带结算失败中的挑战（挑战失败惩罚仍需单独捐 3 元）。已移除违规告诫 AI 对话与 `reset_violation_count` 工具。
   - 识别用当前选中的 API（需 `supportImage`），否则用其视觉辅助模型；都没有则直接报错。
 - 请假：违规惩罚页标题栏的请假按钮（`ViolationChatViewModel.requestLeave`），每个自然周（周一~周日，凌晨 4 点换日）一次，记录在 config `leave_last_date`。效果是清除所有项目的汇报窗口并取消提醒；清除前先对每个项目跑 `RequiredMessageDeadlineHandler.checkAndRecord`，已过期未汇报的窗口照常记违规；没有窗口可清时不消耗次数。
 - 挑战可设过渡期：`challenge.transition_end_date`（含当天，空 = 无过渡期，范围 开始日期 ≤ x < 截止日期）。今天处于过渡期时，`ChatExecutor.buildChallengeSystemMessage` 会在提示词里写明“日期1 ~ 日期2 是过渡期，今天是 xxx，属于过渡期”。已开始的挑战只能提前结束或取消过渡期，不能新增或延长。
@@ -42,6 +42,7 @@ Android 原生单模块应用（`:app`，包名 `com.xdl.upward`）：按项目�
 
 ## 每日达标记录
 
+- **追踪起点**：config `tracking_start_at` 在更新后第一次运行 `DailyStatusRecorder` 时写入（打开/覆盖安装/开机/闹钟），此前已结束的时段不回溯、不落库、不记违规。周全勤奖励（`applyWeeklyReward`）：每个完整自然周（周一~周日，不含起点所在不完整周）有打卡成功且无失败、无违规记录，减免 1 次违规。
 - `daily_status` 表：(项目, 打卡日, 组件 morning/afternoon/evening/daily/challenge) 唯一；`DailyStatusDao.record` 规则：无记录则新增，pending 才可升级为 success/failed，已定的不再改。
 - 写入时机：发消息当下（`ChatExecutor.sendUserMessage` → `DailyStatusRecorder.recordMessageSent`）、挑战打卡当下、`DailyStatusScheduler` 在 04:00/13:00/19:30 后 30 秒的后台闹钟（`DailyStatusRecorder.sync` 补齐到昨天并记今天）、App 启动/开机/覆盖安装、打开首页。
 

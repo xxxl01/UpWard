@@ -39,6 +39,12 @@ interface ViolationRecordDao {
     @Query("UPDATE violation_record SET deleted = 1, deleted_at = :at, delete_reason = :reason WHERE deleted = 0")
     suspend fun logicalDeleteAllActive(at: String, reason: String)
 
+    @Query("SELECT created_at FROM violation_record WHERE deleted = 0 ORDER BY id ASC LIMIT 1 OFFSET 9")
+    suspend fun tenthActiveCreatedAt(): String?
+
+    @Query("SELECT COUNT(*) FROM violation_record WHERE date >= :fromDate AND date <= :toDate")
+    suspend fun countByDateRange(fromDate: String, toDate: String): Int
+
     @Query("DELETE FROM violation_record")
     suspend fun deleteAll()
 }

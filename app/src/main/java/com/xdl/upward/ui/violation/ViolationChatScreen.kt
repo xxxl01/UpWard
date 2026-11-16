@@ -62,6 +62,7 @@ fun ViolationChatScreen(
 ) {
     val violationCount by viewModel.violationCount.collectAsStateWithLifecycle()
     val records by viewModel.paymentRecords.collectAsStateWithLifecycle()
+    val surchargeYuan by viewModel.surchargeYuan.collectAsStateWithLifecycle()
     val violationRecords by viewModel.violationRecords.collectAsStateWithLifecycle()
     var selectedTab by remember { mutableStateOf(0) }
     var filter by remember { mutableStateOf(1) }
@@ -92,8 +93,8 @@ fun ViolationChatScreen(
 
         // 顶部固定区：状态横幅 + 上传按钮 + 提示信息；下面的明细在自己的区域内滚动，页面本身不会无限变长。
         Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp)) {
-            ViolationWarningBanner(violationCount = violationCount)
-            if (punished) {
+            ViolationWarningBanner(violationCount = violationCount, surchargeYuan = surchargeYuan)
+            if (violationCount > 0) {
                 Spacer(modifier = Modifier.height(8.dp))
                 Button(
                     onClick = {
@@ -261,6 +262,7 @@ private fun ViolationRecordItem(record: ViolationRecordEntity) {
     val statusText = when {
         active -> "有效"
         record.deleteReason == "payment" -> "已抵扣"
+        record.deleteReason == "weekly_reward" -> "周全勤减免"
         record.deleteReason == "monthly_reset" -> "月度清零"
         else -> "已删除"
     }
@@ -373,7 +375,7 @@ private fun ViolationHeaderBar(
 }
 
 @Composable
-private fun ViolationWarningBanner(violationCount: Int) {
+private fun ViolationWarningBanner(violationCount: Int, surchargeYuan: Int) {
     val punished = violationCount >= 10
     val containerColor = if (punished) {
         MaterialTheme.colorScheme.errorContainer
@@ -391,9 +393,10 @@ private fun ViolationWarningBanner(violationCount: Int) {
         "已累计违规 $violationCount 次"
     }
     val body = if (punished) {
-        "所有项目已拦截消息发送。请向公益慈善机构捐款 4 元及以上，上传包含交易单号的捐款截图；审核通过后抵扣 10 次违规，并一并结算所有失败中的挑战惩罚。每笔捐款只能使用一次。"
+        val fine = if (surchargeYuan > 0) "已超期未捐款，需先付清罚款 $surchargeYuan 元（每满一天 +5 元），再加上要抵扣的次数。" else "超过一天未捐款，每满一天罚款 +5 元。"
+        "所有项目已拦截消息发送。请向公益慈善机构捐款并上传包含交易单号的截图，1 元抵扣 1 次违规。$fine 每笔捐款只能使用一次。"
     } else {
-        "每次缺卡/失败记 1 次，累计 10 次触发惩罚：拦截所有项目消息发送，需捐款 4 元及以上抵扣 10 次。"
+        "每次缺卡/失败记 1 次；累计 10 次触发惩罚（拦截所有项目消息发送）。捐款 1 元抵扣 1 次；连续一周没有缺卡减免 1 次。"
     }
     Column(
         modifier = Modifier

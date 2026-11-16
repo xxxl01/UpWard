@@ -30,10 +30,6 @@ object PaymentVerifier {
     const val PURPOSE_VIOLATION = "violation_penalty"
 
     const val CHALLENGE_MIN_CENTS = 300L
-    const val VIOLATION_MIN_CENTS = 400L
-
-    private const val VIOLATION_DEDUCT = 10
-    private const val VIOLATION_THRESHOLD = 10
 
     data class Recognition(
         val paymentSuccess: Boolean,
@@ -108,41 +104,46 @@ object PaymentVerifier {
         }
     }
 
-    // 违规惩罚：识别通过后违规次数抵扣 10 次，并一并结算所有失败惩罚中的挑战。
+    // 违规惩罚：1 元抵扣 1 次违规（取整）；进入惩罚后超期未捐款的罚款（每满一天 +5 元）要先付清。
+    // 捐款金额 = 超期罚款 + 抵扣次数，至少要多于罚款 1 元。
     suspend fun verifyViolationPenalty(context: Context, imagePath: String): Result {
         val database = AppDatabase.getInstance(context)
-        val count = database.violationRecordDao().activeCount()
-        if (count < VIOLATION_THRESHOLD) {
-            return Result.Rejected("当前违规 $count 次，未达到惩罚线，无需提交捐款")
+        val before = ViolationPenalty.status(context)
+        if (before.active <= 0) {
+            return Result.Rejected("当前没有有效的违规记录，无需提交捐款")
         }
-        val recognition = when (val r = recognizeAndCheck(context, imagePath, VIOLATION_MIN_CENTS)) {
+        val recognition = when (val r = recognizeAndCheck(context, imagePath, (before.surchargeYuan + 1) * 100L)) {
             is Result.Rejected -> return r
             is Result.Accepted -> r.recognition
         }
-        val challengeRepository = ChallengeRepository(database.challengeDao(), database.challengeCheckInDao())
         return database.withTransaction {
             val violationDao = database.violationRecordDao()
-            val currentCount = violationDao.activeCount()
-            if (currentCount < VIOLATION_THRESHOLD) {
-                return@withTransaction Result.Rejected("当前违规 $currentCount 次，未达到惩罚线，无需提交捐款", recognition)
+            val status = ViolationPenalty.status(context)
+            if (status.active <= 0) {
+                return@withTransaction Result.Rejected("当前没有有效的违规记录，无需提交捐款", recognition)
+            }
+            val yuan = (recognition.amountCents / 100).toInt()
+            if (yuan < status.surchargeYuan + 1) {
+                return@withTransaction Result.Rejected("当前需先付清超期罚款 ${status.surchargeYuan} 元，本次捐款至少 ${status.surchargeYuan + 1} 元", recognition)
             }
             if (database.paymentRecordDao().getByOrderNo(recognition.orderNo) != null) {
                 return@withTransaction Result.Rejected("该笔捐款（单号 ${recognition.orderNo}）已经使用过，请提交新的捐款", recognition)
             }
             val paymentId = database.paymentRecordDao().insert(recognition.toRecord(PURPOSE_VIOLATION, 0, imagePath))
-            // 逻辑删除最早的 10 条违规记录，保留记录本身和对应捐款
-            violationDao.logicalDeleteOldest(VIOLATION_DEDUCT, java.time.OffsetDateTime.now().toString(), "payment", paymentId)
+            val deduct = minOf(yuan - status.surchargeYuan, status.active)
+            // 逻辑删除最早的 deduct 条违规记录，保留记录本身和对应捐款
+            violationDao.logicalDeleteOldest(deduct, java.time.OffsetDateTime.now().toString(), "payment", paymentId)
             val remaining = violationDao.activeCount()
-            val settled = challengeRepository.settleAllFailed()
-            val challengeNote = if (settled > 0) "，并已同步结算 $settled 个挑战失败惩罚" else ""
-            val stateNote = if (remaining >= VIOLATION_THRESHOLD) {
-                "项目消息仍处于拦截状态，需要再提交一笔捐款"
+            ViolationPenalty.afterPayment(context, remaining >= ViolationPenalty.THRESHOLD)
+            val fineNote = if (status.surchargeYuan > 0) "（含超期罚款 ${status.surchargeYuan} 元）" else ""
+            val stateNote = if (remaining >= ViolationPenalty.THRESHOLD) {
+                "项目消息仍处于拦截状态，需要继续捐款（1 元抵扣 1 次）"
             } else {
-                "惩罚已解除，可以在项目里正常发送消息了"
+                "未处于惩罚状态，可以在项目里正常发送消息"
             }
             Result.Accepted(
                 recognition,
-                "审核通过：捐款 ${formatYuan(recognition.amountCents)} 元，违规次数抵扣 $VIOLATION_DEDUCT 次$challengeNote，剩余 $remaining 次，$stateNote。"
+                "审核通过：捐款 ${formatYuan(recognition.amountCents)} 元$fineNote，抵扣 $deduct 次违规，剩余 $remaining 次，$stateNote。"
             )
         }
     }

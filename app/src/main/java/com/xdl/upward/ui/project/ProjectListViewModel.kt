@@ -20,7 +20,6 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import java.time.LocalDate
 import java.time.OffsetDateTime
-import java.time.YearMonth
 
 data class ProjectYesterdayCheckStatus(
     val projectName: String,
@@ -113,7 +112,7 @@ class ProjectListViewModel(application: Application) : AndroidViewModel(applicat
     fun checkViolationOnEnter() {
         viewModelScope.launch {
             checkRequiredMessageDeadlines()
-            // 先落库并生成违规记录（需要读取 violation_checked_date 作为起算日），再做月度清零和挑战判定
+            // 先落库并生成违规记录，再做挑战判定
             DailyStatusRecorder.sync(getApplication())
             checkViolation()
             selectToday()
@@ -150,18 +149,6 @@ class ProjectListViewModel(application: Application) : AndroidViewModel(applicat
 
     private suspend fun checkViolation() {
         val today = challengeRepository.currentCheckInDate()
-        val currentMonth = YearMonth.from(today).toString()
-        val oldMonth = configRepository.getValue("violation_month")
-        if (oldMonth != currentMonth) {
-            configRepository.setValue("violation_month", currentMonth)
-            // 处于惩罚状态（累计至少 10 次）时换月不清零，必须通过捐款抵扣后降到 10 次以下才会解除
-            val violationDao = database.violationRecordDao()
-            if (violationDao.activeCount() < 10) {
-                violationDao.logicalDeleteAllActive(OffsetDateTime.now().toString(), "monthly_reset")
-            }
-            configRepository.setValue("violation_checked_date", "")
-        }
-
         val todayText = today.toString()
         val ruleVersion = "challenge_priority_check_in_v4"
         if (
@@ -174,6 +161,14 @@ class ProjectListViewModel(application: Application) : AndroidViewModel(applicat
         // 违规记录不在这里产生：一次缺卡/失败记一次（含挑战缺卡），由 DailyStatusRecorder.sync 从 daily_status 的失败记录生成。
         // 这里只负责挑战：昨天处于挑战模式且缺卡时，把 active 挑战判为失败。
         val yesterday = today.minusDays(1)
+        // 追踪起点之前已经结束的日子不管
+        val trackingStart = DailyStatusRecorder.trackingStartAt(configRepository)
+        val yesterdayEnd = today.atTime(4, 0).atOffset(trackingStart.offset)
+        if (!yesterdayEnd.isAfter(trackingStart)) {
+            configRepository.setValue("violation_checked_date", todayText)
+            configRepository.setValue("violation_rule_version", ruleVersion)
+            return
+        }
         for (project in repository.getProjects()) {
             val challenge = challengeRepository.challengeOfDate(project.id, yesterday) ?: continue
             val done = challengeRepository.getCheckIns(challenge.id).any { it.date == yesterday.toString() }

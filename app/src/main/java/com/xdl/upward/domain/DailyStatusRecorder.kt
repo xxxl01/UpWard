@@ -17,7 +17,8 @@ import java.time.OffsetDateTime
 /** 把每日达标情况落库到 daily_status。后台闹钟、开机/覆盖安装、打开 App 都走这里。 */
 object DailyStatusRecorder {
     private const val KEY_SYNCED_DATE = "daily_status_synced_date"
-    private const val KEY_VIOLATION_FROM = "violation_from_date"
+    private const val KEY_TRACKING_START = "tracking_start_at"
+    private const val KEY_WEEKLY_REWARD = "weekly_reward_last_week_start"
     private const val MAX_BACKFILL_DAYS = 90L
     private val mutex = Mutex()
 
@@ -31,13 +32,12 @@ object DailyStatusRecorder {
         val challengeRepository = ChallengeRepository(database.challengeDao(), database.challengeCheckInDao())
         val today = challengeRepository.currentCheckInDate()
         val yesterday = today.minusDays(1)
-        val initialDate = configRepository.getValue("initial_date")?.let {
-            runCatching { LocalDate.parse(it) }.getOrNull()
-        } ?: today
+        // 以本次更新后第一次打开（或覆盖安装）的时间为起点，之前的日子不回溯、不落库
+        val startDate = trackingStartDate(configRepository)
         val synced = configRepository.getValue(KEY_SYNCED_DATE)?.let {
             runCatching { LocalDate.parse(it) }.getOrNull()
         }
-        var start = (synced?.plusDays(1) ?: initialDate).let { if (it.isBefore(initialDate)) initialDate else it }
+        var start = (synced?.plusDays(1) ?: startDate).let { if (it.isBefore(startDate)) startDate else it }
         val earliest = yesterday.minusDays(MAX_BACKFILL_DAYS)
         if (start.isBefore(earliest)) start = earliest
         var date = start
@@ -50,6 +50,49 @@ object DailyStatusRecorder {
         }
         computeAndPersist(context, today)
         recordViolations(context, today)
+        applyWeeklyReward(context, today)
+    }
+
+    /** 追踪起点（首次运行时写入）；打卡日口径（凌晨 4 点换日）。 */
+    suspend fun trackingStartAt(configRepository: ConfigRepository): OffsetDateTime {
+        configRepository.getValue(KEY_TRACKING_START)
+            ?.let { runCatching { OffsetDateTime.parse(it) }.getOrNull() }
+            ?.let { return it }
+        val now = OffsetDateTime.now()
+        configRepository.setValue(KEY_TRACKING_START, now.toString())
+        return now
+    }
+
+    private suspend fun trackingStartDate(configRepository: ConfigRepository): LocalDate {
+        val at = trackingStartAt(configRepository)
+        return if (at.toLocalTime().isBefore(java.time.LocalTime.of(4, 0))) at.toLocalDate().minusDays(1) else at.toLocalDate()
+    }
+
+    /**
+     * 周全勤奖励：每个自然周（周一~周日）结束后，若这一周有打卡记录、没有任何失败/缺卡、也没有违规记录，
+     * 逻辑删除最早的 1 条有效违规（原因 weekly_reward）。追踪起点所在的不完整周不算。
+     */
+    private suspend fun applyWeeklyReward(context: Context, today: LocalDate) {
+        val database = AppDatabase.getInstance(context)
+        val configRepository = ConfigRepository(database.configDao())
+        val startDate = trackingStartDate(configRepository)
+        val last = configRepository.getValue(KEY_WEEKLY_REWARD)?.let { runCatching { LocalDate.parse(it) }.getOrNull() }
+        var weekStart = startDate.with(java.time.temporal.TemporalAdjusters.next(java.time.DayOfWeek.MONDAY))
+        if (last != null && !last.plusWeeks(1).isBefore(weekStart)) weekStart = last.plusWeeks(1)
+        val statusDao = database.dailyStatusDao()
+        val violationDao = database.violationRecordDao()
+        while (!weekStart.plusDays(6).isAfter(today.minusDays(1))) {
+            val from = weekStart.toString()
+            val to = weekStart.plusDays(6).toString()
+            val failed = statusDao.countByStatus(from, to, DailyStatusEntity.FAILED)
+            val success = statusDao.countByStatus(from, to, DailyStatusEntity.SUCCESS)
+            val violations = violationDao.countByDateRange(from, to)
+            if (failed == 0 && success > 0 && violations == 0) {
+                violationDao.logicalDeleteOldest(1, OffsetDateTime.now().toString(), "weekly_reward", 0)
+            }
+            configRepository.setValue(KEY_WEEKLY_REWARD, from)
+            weekStart = weekStart.plusWeeks(1)
+        }
     }
 
     /**
@@ -60,10 +103,7 @@ object DailyStatusRecorder {
     private suspend fun recordViolations(context: Context, today: LocalDate) {
         val database = AppDatabase.getInstance(context)
         val configRepository = ConfigRepository(database.configDao())
-        val from = configRepository.getValue(KEY_VIOLATION_FROM)?.let { runCatching { LocalDate.parse(it) }.getOrNull() }
-            ?: (configRepository.getValue("violation_checked_date")?.let { runCatching { LocalDate.parse(it) }.getOrNull() } ?: today).also {
-                configRepository.setValue(KEY_VIOLATION_FROM, it.toString())
-            }
+        val from = trackingStartDate(configRepository)
         val projectRepository = ProjectRepository(database.projectDao())
         val violationDao = database.violationRecordDao()
         val now = OffsetDateTime.now().toString()
@@ -138,9 +178,7 @@ object DailyStatusRecorder {
         val noon = date.atTime(13, 0).atOffset(offset)
         val evening = date.atTime(19, 30).atOffset(offset)
         val dayEnd = date.plusDays(1).atTime(4, 0).atOffset(offset)
-        val initialDate = configRepository.getValue("initial_date")?.let {
-            try { LocalDate.parse(it) } catch (e: Exception) { null }
-        } ?: challengeRepository.currentCheckInDate()
+        val trackingStart = trackingStartAt(configRepository)
 
         // 返回 Pair(是否适用, 状态)；start/end 为该时段窗口。
         suspend fun windowStatus(
@@ -155,10 +193,11 @@ object DailyStatusRecorder {
             if (old != null && old.status != DailyStatusEntity.PENDING) {
                 return old.status == DailyStatusEntity.SUCCESS
             }
+            // 追踪起点之前已经结束的时段不管、不落库
+            if (!end.isAfter(trackingStart)) return null
             if (now.isBefore(start)) return null
             if (created.isAfter(start) && component != "daily") return null
             val ended = !now.isBefore(end)
-            if (ended && !initialDate.isBefore(date)) return null
             if (ended && component == "daily" && !created.isBefore(end)) return null
             val has = messageRepository.hasUserMessagesBetween(projectId, start.toString(), end.toString())
             val result: Boolean? = if (has) true else if (ended) false else null
@@ -179,7 +218,7 @@ object DailyStatusRecorder {
                 val old = saved[project.id to "challenge"]
                 val result: Boolean? = if (old != null && old.status != DailyStatusEntity.PENDING) {
                     old.status == DailyStatusEntity.SUCCESS
-                } else if (now.isBefore(dayStart)) {
+                } else if (now.isBefore(dayStart) || !dayEnd.isAfter(trackingStart)) {
                     null
                 } else {
                     val done = challengeRepository.getCheckIns(challenge.id).any { it.date == date.toString() }

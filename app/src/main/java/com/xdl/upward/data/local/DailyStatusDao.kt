@@ -18,6 +18,9 @@ abstract class DailyStatusDao {
     @Query("SELECT * FROM daily_status WHERE status = 'failed' AND date >= :fromDate ORDER BY date ASC, id ASC")
     abstract suspend fun getFailedFrom(fromDate: String): List<DailyStatusEntity>
 
+    @Query("SELECT COUNT(*) FROM daily_status WHERE date >= :fromDate AND date <= :toDate AND status = :status")
+    abstract suspend fun countByStatus(fromDate: String, toDate: String, status: String): Int
+
     @Query("SELECT * FROM daily_status ORDER BY id ASC")
     abstract suspend fun getAllForBackup(): List<DailyStatusEntity>
 
