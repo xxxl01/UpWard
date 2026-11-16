@@ -6,6 +6,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.xdl.upward.data.local.AppDatabase
 import com.xdl.upward.data.local.PaymentRecordEntity
+import com.xdl.upward.data.local.ViolationRecordEntity
 import com.xdl.upward.data.repository.ChallengeRepository
 import com.xdl.upward.data.repository.ConfigRepository
 import com.xdl.upward.data.repository.ProjectRepository
@@ -46,6 +47,11 @@ class ViolationChatViewModel(application: Application) : AndroidViewModel(applic
 
     // 所有通过审核的捐款记录（挑战惩罚与违规惩罚都展示，方便回看）。
     val paymentRecords: StateFlow<List<PaymentRecordEntity>> = database.paymentRecordDao()
+        .observeAll()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    // 全部违规记录（含已抵扣/清零的逻辑删除记录），新的在前。
+    val violationRecords: StateFlow<List<ViolationRecordEntity>> = database.violationRecordDao()
         .observeAll()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 

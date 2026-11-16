@@ -3,6 +3,7 @@ package com.xdl.upward.domain
 import android.content.Context
 import com.xdl.upward.data.local.AppDatabase
 import com.xdl.upward.data.local.DailyStatusEntity
+import com.xdl.upward.data.local.ViolationRecordEntity
 import com.xdl.upward.data.repository.ChallengeRepository
 import com.xdl.upward.data.repository.ConfigRepository
 import com.xdl.upward.data.repository.MessageRepository
@@ -16,6 +17,7 @@ import java.time.OffsetDateTime
 /** 把每日达标情况落库到 daily_status。后台闹钟、开机/覆盖安装、打开 App 都走这里。 */
 object DailyStatusRecorder {
     private const val KEY_SYNCED_DATE = "daily_status_synced_date"
+    private const val KEY_VIOLATION_FROM = "violation_from_date"
     private const val MAX_BACKFILL_DAYS = 90L
     private val mutex = Mutex()
 
@@ -47,6 +49,43 @@ object DailyStatusRecorder {
             configRepository.setValue(KEY_SYNCED_DATE, yesterday.toString())
         }
         computeAndPersist(context, today)
+        recordViolations(context, today)
+    }
+
+    /**
+     * 违规规则：每一次失败/缺卡（daily_status 里一个 failed 的时段，不含挑战）记一次违规，每日没有上限。
+     * 起算日 violation_from_date 第一次取旧规则的 violation_checked_date（该日之前已按旧规则计过），
+     * 避免升级后把历史失败重复算一遍。ref_key 唯一，重复同步不会重复入账。
+     */
+    private suspend fun recordViolations(context: Context, today: LocalDate) {
+        val database = AppDatabase.getInstance(context)
+        val configRepository = ConfigRepository(database.configDao())
+        val from = configRepository.getValue(KEY_VIOLATION_FROM)?.let { runCatching { LocalDate.parse(it) }.getOrNull() }
+            ?: (configRepository.getValue("violation_checked_date")?.let { runCatching { LocalDate.parse(it) }.getOrNull() } ?: today).also {
+                configRepository.setValue(KEY_VIOLATION_FROM, it.toString())
+            }
+        val projectRepository = ProjectRepository(database.projectDao())
+        val violationDao = database.violationRecordDao()
+        val now = OffsetDateTime.now().toString()
+        database.dailyStatusDao().getFailedFrom(from.toString()).forEach { row ->
+            val name = projectRepository.getProject(row.projectId)?.name ?: "已删除项目"
+            val label = when (row.component) {
+                "morning" -> "上午"
+                "afternoon" -> "下午"
+                "evening" -> "晚上"
+                else -> "每日"
+            }
+            violationDao.insert(
+                ViolationRecordEntity(
+                    refKey = "checkin:${row.date}:${row.projectId}:${row.component}",
+                    source = "checkin",
+                    projectId = row.projectId,
+                    date = row.date,
+                    detail = "「$name」$label 未汇报",
+                    createdAt = now
+                )
+            )
+        }
     }
 
     /**

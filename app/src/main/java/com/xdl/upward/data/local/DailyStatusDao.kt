@@ -15,6 +15,9 @@ abstract class DailyStatusDao {
     @Query("SELECT * FROM daily_status WHERE project_id = :projectId AND date = :date AND component = :component LIMIT 1")
     abstract suspend fun find(projectId: Long, date: String, component: String): DailyStatusEntity?
 
+    @Query("SELECT * FROM daily_status WHERE status = 'failed' AND component != 'challenge' AND date >= :fromDate ORDER BY date ASC, id ASC")
+    abstract suspend fun getFailedFrom(fromDate: String): List<DailyStatusEntity>
+
     @Query("SELECT * FROM daily_status ORDER BY id ASC")
     abstract suspend fun getAllForBackup(): List<DailyStatusEntity>
 

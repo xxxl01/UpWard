@@ -11,6 +11,9 @@ interface ViolationRecordDao {
     @Query("SELECT COUNT(*) FROM violation_record WHERE deleted = 0")
     fun observeActiveCount(): Flow<Int>
 
+    @Query("SELECT * FROM violation_record ORDER BY id DESC")
+    fun observeAll(): Flow<List<ViolationRecordEntity>>
+
     @Query("SELECT COUNT(*) FROM violation_record WHERE deleted = 0")
     suspend fun activeCount(): Int
 

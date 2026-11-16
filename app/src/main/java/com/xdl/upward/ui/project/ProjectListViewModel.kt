@@ -6,7 +6,6 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.xdl.upward.data.local.AppDatabase
 import com.xdl.upward.data.local.ProjectEntity
-import com.xdl.upward.data.local.ViolationRecordEntity
 import com.xdl.upward.data.repository.ConfigRepository
 import com.xdl.upward.data.repository.ChallengeRepository
 import com.xdl.upward.data.repository.MessageRepository
@@ -114,9 +113,9 @@ class ProjectListViewModel(application: Application) : AndroidViewModel(applicat
     fun checkViolationOnEnter() {
         viewModelScope.launch {
             checkRequiredMessageDeadlines()
-            checkViolation()
-            // 先把昨天落库（昨天已结束，会定成成功/失败），再回到今天
+            // 先落库并生成违规记录（需要读取 violation_checked_date 作为起算日），再做月度清零和挑战判定
             DailyStatusRecorder.sync(getApplication())
+            checkViolation()
             selectToday()
         }
     }
@@ -164,7 +163,7 @@ class ProjectListViewModel(application: Application) : AndroidViewModel(applicat
         }
 
         val todayText = today.toString()
-        val ruleVersion = "challenge_priority_check_in_v3"
+        val ruleVersion = "challenge_priority_check_in_v4"
         if (
             configRepository.getValue("violation_checked_date") == todayText &&
             configRepository.getValue("violation_rule_version") == ruleVersion
@@ -172,99 +171,17 @@ class ProjectListViewModel(application: Application) : AndroidViewModel(applicat
             return
         }
 
+        // 违规记录不在这里产生：一次缺卡/失败记一次，由 DailyStatusRecorder.sync 从 daily_status 的失败记录生成。
+        // 这里只负责挑战：昨天处于挑战模式且缺卡时，把 active 挑战判为失败。
         val yesterday = today.minusDays(1)
-        val initialDate = configRepository.getValue("initial_date")?.let { value ->
-            try {
-                LocalDate.parse(value)
-            } catch (e: Exception) {
-                today
-            }
-        } ?: today
-        if (!initialDate.isBefore(yesterday)) {
-            configRepository.setValue("violation_checked_date", todayText)
-            configRepository.setValue("violation_rule_version", ruleVersion)
-            return
-        }
-
-        val now = OffsetDateTime.now()
-        val yesterdayStartTime = yesterday.atTime(4, 0).atOffset(now.offset)
-        val dailyStart = yesterdayStartTime.toString()
-        val morningStartTime = yesterday.atTime(4, 0).atOffset(now.offset)
-        val noonStartTime = yesterday.atTime(13, 0).atOffset(now.offset)
-        val eveningStartTime = yesterday.atTime(19, 30).atOffset(now.offset)
-        val morningStart = morningStartTime.toString()
-        val noonStart = noonStartTime.toString()
-        val eveningStart = eveningStartTime.toString()
-        val todayStartTime = today.atTime(4, 0).atOffset(now.offset)
-        val todayStart = todayStartTime.toString()
-        val projects = repository.getProjects()
-        val violationDetails = mutableListOf<String>()
-        var firstViolationProjectId = 0L
-        for (project in projects) {
-            val projectCreatedAt = try {
-                OffsetDateTime.parse(project.createdAt)
-            } catch (e: Exception) {
-                now
-            }
-            // 昨天处于挑战模式时以挑战打卡为准，不按普通模式追责：缺卡只判挑战失败，不累加违规次数。
-            val challenge = challengeRepository.challengeOfDate(project.id, yesterday)
-            if (challenge != null) {
-                val done = challengeRepository.getCheckIns(challenge.id).any { it.date == yesterday.toString() }
-                if (!done && challenge.status == ChallengeRepository.STATUS_ACTIVE) {
-                    challengeRepository.markAsFailed(challenge.id)
-                }
-                continue
-            }
-            if (project.checkInMode == "once_per_day") {
-                val shouldCheckDaily = projectCreatedAt.isBefore(todayStartTime)
-                if (!shouldCheckDaily) {
-                    continue
-                }
-                val hasDailyMessage = messageRepository.hasUserMessagesBetween(project.id, dailyStart, todayStart)
-                if (!hasDailyMessage) {
-                    // 不能 break：后面项目的挑战缺卡也要在这里判定失败，违规次数在循环后只加一次
-                    if (firstViolationProjectId == 0L) firstViolationProjectId = project.id
-                    violationDetails.add("「${project.name}」每日未汇报")
-                }
-            } else {
-                val shouldCheckMorning = !projectCreatedAt.isAfter(morningStartTime)
-                val shouldCheckAfternoon = !projectCreatedAt.isAfter(noonStartTime)
-                val shouldCheckEvening = !projectCreatedAt.isAfter(eveningStartTime)
-                if (!shouldCheckMorning && !shouldCheckAfternoon && !shouldCheckEvening) {
-                    continue
-                }
-                val hasMorningMessage = !shouldCheckMorning || messageRepository.hasUserMessagesBetween(project.id, morningStart, noonStart)
-                val hasAfternoonMessage = !shouldCheckAfternoon || messageRepository.hasUserMessagesBetween(project.id, noonStart, eveningStart)
-                val hasEveningMessage = !shouldCheckEvening || messageRepository.hasUserMessagesBetween(project.id, eveningStart, todayStart)
-                if ((shouldCheckMorning && !hasMorningMessage) ||
-                    (shouldCheckAfternoon && !hasAfternoonMessage) ||
-                    (shouldCheckEvening && !hasEveningMessage)
-                ) {
-                    if (firstViolationProjectId == 0L) firstViolationProjectId = project.id
-                    val missed = listOfNotNull(
-                        "上午".takeIf { shouldCheckMorning && !hasMorningMessage },
-                        "下午".takeIf { shouldCheckAfternoon && !hasAfternoonMessage },
-                        "晚上".takeIf { shouldCheckEvening && !hasEveningMessage }
-                    ).joinToString("、")
-                    violationDetails.add("「${project.name}」$missed 未汇报")
-                }
+        for (project in repository.getProjects()) {
+            val challenge = challengeRepository.challengeOfDate(project.id, yesterday) ?: continue
+            val done = challengeRepository.getCheckIns(challenge.id).any { it.date == yesterday.toString() }
+            if (!done && challenge.status == ChallengeRepository.STATUS_ACTIVE) {
+                challengeRepository.markAsFailed(challenge.id)
             }
         }
-
         configRepository.setValue("violation_checked_date", todayText)
         configRepository.setValue("violation_rule_version", ruleVersion)
-        if (violationDetails.isNotEmpty()) {
-            // 一天最多记一次违规（ref_key 保证幂等），次数 = 未被逻辑删除的记录数
-            database.violationRecordDao().insert(
-                ViolationRecordEntity(
-                    refKey = "checkin:$yesterday",
-                    source = "checkin",
-                    projectId = firstViolationProjectId,
-                    date = yesterday.toString(),
-                    detail = "$yesterday 缺卡：" + violationDetails.joinToString("；"),
-                    createdAt = OffsetDateTime.now().toString()
-                )
-            )
-        }
     }
 }
