@@ -3,7 +3,7 @@ package com.xdl.upward.reminder
 import android.content.Context
 import androidx.room.withTransaction
 import com.xdl.upward.data.local.AppDatabase
-import com.xdl.upward.data.local.ConfigEntity
+import com.xdl.upward.data.local.ViolationRecordEntity
 import java.time.OffsetDateTime
 
 /** 统一结算指定回复窗口，事务保证同一窗口只记录一次违规。 */
@@ -30,15 +30,19 @@ object RequiredMessageDeadlineHandler {
             }
 
             database.projectDao().updateNextRequiredMessagePeriod(projectId, "", "")
-            val configDao = database.configDao()
-            val oldConfig = configDao.getByKey("violation_count")
-            val nextCount = (oldConfig?.value?.toIntOrNull() ?: 0) + 1
-            if (oldConfig == null) {
-                configDao.insert(ConfigEntity(key = "violation_count", value = nextCount.toString()))
-            } else {
-                configDao.update(oldConfig.copy(value = nextCount.toString()))
-            }
-            Settlement(true, nextCount)
+            val violationDao = database.violationRecordDao()
+            val now = OffsetDateTime.now()
+            violationDao.insert(
+                ViolationRecordEntity(
+                    refKey = "deadline:$projectId:${project.nextRequiredMessageEndAt}",
+                    source = "deadline",
+                    projectId = projectId,
+                    date = now.toLocalDate().toString(),
+                    detail = "「${project.name}」未在指定时间前回复",
+                    createdAt = now.toString()
+                )
+            )
+            Settlement(true, violationDao.activeCount())
         }
         if (settlement.clearReminder) {
             RequiredMessageReminderScheduler.cancel(context, projectId)

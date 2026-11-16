@@ -111,8 +111,7 @@ object PaymentVerifier {
     // 违规惩罚：识别通过后违规次数抵扣 10 次，并一并结算所有失败惩罚中的挑战。
     suspend fun verifyViolationPenalty(context: Context, imagePath: String): Result {
         val database = AppDatabase.getInstance(context)
-        val configDao = database.configDao()
-        val count = configDao.getByKey("violation_count")?.value?.toIntOrNull() ?: 0
+        val count = database.violationRecordDao().activeCount()
         if (count < VIOLATION_THRESHOLD) {
             return Result.Rejected("当前违规 $count 次，未达到惩罚线，无需提交捐款")
         }
@@ -122,17 +121,18 @@ object PaymentVerifier {
         }
         val challengeRepository = ChallengeRepository(database.challengeDao(), database.challengeCheckInDao())
         return database.withTransaction {
-            val config = configDao.getByKey("violation_count")
-            val currentCount = config?.value?.toIntOrNull() ?: 0
-            if (config == null || currentCount < VIOLATION_THRESHOLD) {
+            val violationDao = database.violationRecordDao()
+            val currentCount = violationDao.activeCount()
+            if (currentCount < VIOLATION_THRESHOLD) {
                 return@withTransaction Result.Rejected("当前违规 $currentCount 次，未达到惩罚线，无需提交捐款", recognition)
             }
             if (database.paymentRecordDao().getByOrderNo(recognition.orderNo) != null) {
                 return@withTransaction Result.Rejected("该笔捐款（单号 ${recognition.orderNo}）已经使用过，请提交新的捐款", recognition)
             }
-            database.paymentRecordDao().insert(recognition.toRecord(PURPOSE_VIOLATION, 0, imagePath))
-            val remaining = currentCount - VIOLATION_DEDUCT
-            configDao.update(config.copy(value = remaining.toString()))
+            val paymentId = database.paymentRecordDao().insert(recognition.toRecord(PURPOSE_VIOLATION, 0, imagePath))
+            // 逻辑删除最早的 10 条违规记录，保留记录本身和对应捐款
+            violationDao.logicalDeleteOldest(VIOLATION_DEDUCT, java.time.OffsetDateTime.now().toString(), "payment", paymentId)
+            val remaining = violationDao.activeCount()
             val settled = challengeRepository.settleAllFailed()
             val challengeNote = if (settled > 0) "，并已同步结算 $settled 个挑战失败惩罚" else ""
             val stateNote = if (remaining >= VIOLATION_THRESHOLD) {

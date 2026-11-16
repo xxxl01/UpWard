@@ -6,6 +6,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.xdl.upward.data.local.AppDatabase
 import com.xdl.upward.data.local.ProjectEntity
+import com.xdl.upward.data.local.ViolationRecordEntity
 import com.xdl.upward.data.repository.ConfigRepository
 import com.xdl.upward.data.repository.ChallengeRepository
 import com.xdl.upward.data.repository.MessageRepository
@@ -78,8 +79,8 @@ class ProjectListViewModel(application: Application) : AndroidViewModel(applicat
 
     init {
         viewModelScope.launch {
-            configRepository.observeViolationCount().collect { value ->
-                _violationCount.value = value?.toIntOrNull() ?: 0
+            AppDatabase.getInstance(application).violationRecordDao().observeActiveCount().collect { value ->
+                _violationCount.value = value
             }
         }
         checkViolationOnEnter()
@@ -155,10 +156,9 @@ class ProjectListViewModel(application: Application) : AndroidViewModel(applicat
         if (oldMonth != currentMonth) {
             configRepository.setValue("violation_month", currentMonth)
             // 处于惩罚状态（累计至少 10 次）时换月不清零，必须通过捐款抵扣后降到 10 次以下才会解除
-            val currentCount = configRepository.getValue("violation_count")?.toIntOrNull() ?: 0
-            if (currentCount < 10) {
-                configRepository.setValue("violation_count", "0")
-                _violationCount.value = 0
+            val violationDao = database.violationRecordDao()
+            if (violationDao.activeCount() < 10) {
+                violationDao.logicalDeleteAllActive(OffsetDateTime.now().toString(), "monthly_reset")
             }
             configRepository.setValue("violation_checked_date", "")
         }
@@ -198,7 +198,8 @@ class ProjectListViewModel(application: Application) : AndroidViewModel(applicat
         val todayStartTime = today.atTime(4, 0).atOffset(now.offset)
         val todayStart = todayStartTime.toString()
         val projects = repository.getProjects()
-        var hasViolationProject = false
+        val violationDetails = mutableListOf<String>()
+        var firstViolationProjectId = 0L
         for (project in projects) {
             val projectCreatedAt = try {
                 OffsetDateTime.parse(project.createdAt)
@@ -222,7 +223,8 @@ class ProjectListViewModel(application: Application) : AndroidViewModel(applicat
                 val hasDailyMessage = messageRepository.hasUserMessagesBetween(project.id, dailyStart, todayStart)
                 if (!hasDailyMessage) {
                     // 不能 break：后面项目的挑战缺卡也要在这里判定失败，违规次数在循环后只加一次
-                    hasViolationProject = true
+                    if (firstViolationProjectId == 0L) firstViolationProjectId = project.id
+                    violationDetails.add("「${project.name}」每日未汇报")
                 }
             } else {
                 val shouldCheckMorning = !projectCreatedAt.isAfter(morningStartTime)
@@ -238,19 +240,31 @@ class ProjectListViewModel(application: Application) : AndroidViewModel(applicat
                     (shouldCheckAfternoon && !hasAfternoonMessage) ||
                     (shouldCheckEvening && !hasEveningMessage)
                 ) {
-                    hasViolationProject = true
+                    if (firstViolationProjectId == 0L) firstViolationProjectId = project.id
+                    val missed = listOfNotNull(
+                        "上午".takeIf { shouldCheckMorning && !hasMorningMessage },
+                        "下午".takeIf { shouldCheckAfternoon && !hasAfternoonMessage },
+                        "晚上".takeIf { shouldCheckEvening && !hasEveningMessage }
+                    ).joinToString("、")
+                    violationDetails.add("「${project.name}」$missed 未汇报")
                 }
             }
         }
 
         configRepository.setValue("violation_checked_date", todayText)
         configRepository.setValue("violation_rule_version", ruleVersion)
-        if (hasViolationProject) {
-            // 违规次数持续累加，达到 10 次后仍继续累计；每笔捐款抵扣 10 次
-            val currentCount = configRepository.getValue("violation_count")?.toIntOrNull() ?: 0
-            val finalCount = currentCount + 1
-            configRepository.setValue("violation_count", finalCount.toString())
-            _violationCount.value = finalCount
+        if (violationDetails.isNotEmpty()) {
+            // 一天最多记一次违规（ref_key 保证幂等），次数 = 未被逻辑删除的记录数
+            database.violationRecordDao().insert(
+                ViolationRecordEntity(
+                    refKey = "checkin:$yesterday",
+                    source = "checkin",
+                    projectId = firstViolationProjectId,
+                    date = yesterday.toString(),
+                    detail = "$yesterday 缺卡：" + violationDetails.joinToString("；"),
+                    createdAt = OffsetDateTime.now().toString()
+                )
+            )
         }
     }
 }

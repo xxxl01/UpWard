@@ -32,4 +32,7 @@ interface ConfigDao {
 
     @Query("DELETE FROM config")
     suspend fun deleteAll()
+
+    @Query("DELETE FROM config WHERE `key` = :key")
+    suspend fun deleteByKey(key: String)
 }

@@ -18,9 +18,10 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         ChallengeCheckInEntity::class,
         HolidayEntity::class,
         PaymentRecordEntity::class,
-        DailyStatusEntity::class
+        DailyStatusEntity::class,
+        ViolationRecordEntity::class
     ],
-    version = 18,
+    version = 19,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -34,6 +35,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun challengeCheckInDao(): ChallengeCheckInDao
     abstract fun holidayDao(): HolidayDao
     abstract fun dailyStatusDao(): DailyStatusDao
+    abstract fun violationRecordDao(): ViolationRecordDao
 
     companion object {
         @Volatile
@@ -279,6 +281,43 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        private val MIGRATION_18_19 = object : Migration(18, 19) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS violation_record (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        ref_key TEXT NOT NULL,
+                        source TEXT NOT NULL,
+                        project_id INTEGER NOT NULL,
+                        date TEXT NOT NULL,
+                        detail TEXT NOT NULL,
+                        created_at TEXT NOT NULL,
+                        deleted INTEGER NOT NULL,
+                        deleted_at TEXT NOT NULL,
+                        delete_reason TEXT NOT NULL,
+                        payment_record_id INTEGER NOT NULL
+                    )
+                    """.trimIndent()
+                )
+                db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_violation_record_ref_key ON violation_record (ref_key)")
+                // 把旧的 config.violation_count 计数转成等量的历史记录，然后删除该计数键
+                var count = 0
+                db.query("SELECT value FROM config WHERE `key` = 'violation_count'").use { c ->
+                    if (c.moveToFirst()) count = c.getString(0)?.toIntOrNull() ?: 0
+                }
+                val now = java.time.OffsetDateTime.now().toString()
+                for (i in 1..count) {
+                    db.execSQL(
+                        "INSERT INTO violation_record (ref_key, source, project_id, date, detail, created_at, deleted, deleted_at, delete_reason, payment_record_id) " +
+                            "VALUES ('legacy:$i', 'legacy', 0, '', '升级前累计的违规次数', ?, 0, '', '', 0)",
+                        arrayOf(now)
+                    )
+                }
+                db.execSQL("DELETE FROM config WHERE `key` = 'violation_count'")
+            }
+        }
+
         fun getInstance(context: Context): AppDatabase {
             return instance ?: synchronized(this) {
                 instance ?: Room.databaseBuilder(
@@ -286,7 +325,7 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     "upward.db"
                 )
-                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18)
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19)
                     .addCallback(object : Callback() {
                         override fun onOpen(db: SupportSQLiteDatabase) {
                             super.onOpen(db)

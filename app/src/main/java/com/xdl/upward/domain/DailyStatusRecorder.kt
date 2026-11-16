@@ -50,6 +50,36 @@ object DailyStatusRecorder {
     }
 
     /**
+     * 用户发出一条消息的当下，把该项目当前时段记为成功。
+     * 挑战模式的项目不在这里记（挑战以打卡为准）；项目在该时段开始之后才创建的，不适用，不记。
+     */
+    suspend fun recordMessageSent(context: Context, projectId: Long) {
+        val database = AppDatabase.getInstance(context)
+        val project = ProjectRepository(database.projectDao()).getProject(projectId) ?: return
+        val challengeRepository = ChallengeRepository(database.challengeDao(), database.challengeCheckInDao())
+        val now = OffsetDateTime.now()
+        val date = challengeRepository.currentCheckInDate()
+        if (challengeRepository.challengeOfDate(projectId, date) != null) return
+        val dateText = date.toString()
+        val dao = database.dailyStatusDao()
+        if (project.checkInMode == "once_per_day") {
+            dao.record(projectId, dateText, "daily", "once_per_day", DailyStatusEntity.SUCCESS)
+            return
+        }
+        val dayStart = date.atTime(4, 0).atOffset(now.offset)
+        val noon = date.atTime(13, 0).atOffset(now.offset)
+        val evening = date.atTime(19, 30).atOffset(now.offset)
+        val (component, start) = when {
+            now.isBefore(noon) -> "morning" to dayStart
+            now.isBefore(evening) -> "afternoon" to noon
+            else -> "evening" to evening
+        }
+        val created = runCatching { OffsetDateTime.parse(project.createdAt) }.getOrDefault(now)
+        if (created.isAfter(start)) return
+        dao.record(projectId, dateText, component, "three_times", DailyStatusEntity.SUCCESS)
+    }
+
+    /**
      * 计算某个打卡日各项目各组件的状态（true 成功 / false 失败 / null 待定或不适用），
      * 并写入 daily_status：库里已是成功/失败的直接沿用，不再重算；待定只会被升级为成功/失败。
      */

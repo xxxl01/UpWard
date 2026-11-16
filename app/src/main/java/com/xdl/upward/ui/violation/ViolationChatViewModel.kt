@@ -60,8 +60,8 @@ class ViolationChatViewModel(application: Application) : AndroidViewModel(applic
 
     init {
         viewModelScope.launch {
-            configRepository.observeViolationCount().collect { value ->
-                _violationCount.value = value?.toIntOrNull() ?: 0
+            AppDatabase.getInstance(application).violationRecordDao().observeActiveCount().collect { value ->
+                _violationCount.value = value
             }
         }
         viewModelScope.launch { refreshLeaveState() }

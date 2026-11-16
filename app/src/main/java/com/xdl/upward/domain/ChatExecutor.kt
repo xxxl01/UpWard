@@ -3,6 +3,7 @@ package com.xdl.upward.domain
 import android.content.Context
 import com.xdl.upward.data.local.AiApiEntity
 import com.xdl.upward.data.local.AppDatabase
+import com.xdl.upward.data.local.DailyStatusEntity
 import com.xdl.upward.data.local.ProjectEntity
 import com.xdl.upward.data.remote.AiApiService
 import com.xdl.upward.data.repository.AiApiRepository
@@ -89,6 +90,8 @@ object ChatExecutor {
     ) {
         launchChat(context, projectId, criticalMode, experienceMode, casualMode) { deps ->
             deps.messageRepository.addUserMessage(projectId, content, imagePaths)
+            // 发消息的当下就把对应时段记为成功
+            runCatching { DailyStatusRecorder.recordMessageSent(context.applicationContext, projectId) }
             imagePaths
         }
     }
@@ -152,7 +155,7 @@ object ChatExecutor {
                     }
                 }
                 val violationCount = finalCount
-                    ?: (deps.configRepository.getValue("violation_count")?.toIntOrNull() ?: 0)
+                    ?: AppDatabase.getInstance(deps.appContext).violationRecordDao().activeCount()
                 if (violationCount >= 10) {
                     update(projectId) {
                         it.copy(errorMessage = "你已累计违规 $violationCount 次，处于惩罚状态，消息发送已被拦截。请捐款 4 元及以上，到“违规惩罚”页上传捐款截图；每笔捐款抵扣 10 次违规。")
@@ -597,6 +600,12 @@ object ChatExecutor {
         val inserted = deps.challengeRepository.checkInToday(challenge.id, date, summary)
         if (!inserted) {
             return "工具调用失败：今天已经打卡过了。"
+        }
+        // 挑战打卡的当下就记为成功
+        runCatching {
+            AppDatabase.getInstance(deps.appContext).dailyStatusDao().record(
+                challenge.projectId, date, "challenge", "challenge", DailyStatusEntity.SUCCESS
+            )
         }
         val totalDays = deps.challengeRepository.totalDays(challenge)
         val checkInDays = deps.challengeRepository.checkInDaysSoFar(challenge)

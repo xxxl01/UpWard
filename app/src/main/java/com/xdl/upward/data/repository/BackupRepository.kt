@@ -7,6 +7,7 @@ import com.xdl.upward.data.local.AiApiEntity
 import com.xdl.upward.data.local.AppDatabase
 import com.xdl.upward.data.local.ChallengeCheckInEntity
 import com.xdl.upward.data.local.DailyStatusEntity
+import com.xdl.upward.data.local.ViolationRecordEntity
 import com.xdl.upward.data.local.ChallengeEntity
 import com.xdl.upward.data.local.ConfigEntity
 import com.xdl.upward.data.local.DailyRecordEntity
@@ -95,6 +96,7 @@ class BackupRepository(
             .put("challenges", challengesToJson(database.challengeDao().getAllForBackup()))
             .put("challenge_checkins", challengeCheckInsToJson(database.challengeCheckInDao().getAllForBackup()))
             .put("payment_records", paymentRecords)
+            .put("violation_records", violationRecordsToJson(database.violationRecordDao().getAllForBackup()))
             .put("daily_statuses", dailyStatusesToJson(database.dailyStatusDao().getAllForBackup()))
 
         context.contentResolver.openOutputStream(uri)?.use { outputStream ->
@@ -183,6 +185,7 @@ class BackupRepository(
             database.challengeCheckInDao().deleteAll()
             database.paymentRecordDao().deleteAll()
             database.dailyStatusDao().deleteAll()
+            database.violationRecordDao().deleteAll()
 
             val projects = readProjects(json.getJSONArray("projects"))
             if (projects.isNotEmpty()) database.projectDao().insertAll(projects)
@@ -200,6 +203,20 @@ class BackupRepository(
             // 旧备份没有 payment_records，optJSONArray 兜底为空
             val paymentRecords = readPaymentRecords(json.optJSONArray("payment_records"), restoredImagePaths)
             if (paymentRecords.isNotEmpty()) database.paymentRecordDao().insertAll(paymentRecords)
+            val violationArray = json.optJSONArray("violation_records")
+            if (violationArray != null) {
+                val records = readViolationRecords(violationArray)
+                if (records.isNotEmpty()) database.violationRecordDao().insertAll(records)
+            } else {
+                // 旧备份：违规次数存在 config.violation_count，转成等量历史记录
+                val legacy = configs.firstOrNull { it.key == "violation_count" }?.value?.toIntOrNull() ?: 0
+                val now = java.time.OffsetDateTime.now().toString()
+                val records = (1..legacy).map {
+                    ViolationRecordEntity(refKey = "legacy:$it", source = "legacy", detail = "备份恢复前累计的违规次数", createdAt = now)
+                }
+                if (records.isNotEmpty()) database.violationRecordDao().insertAll(records)
+                database.configDao().deleteByKey("violation_count")
+            }
             // 旧备份没有 daily_statuses
             val dailyStatuses = readDailyStatuses(json.optJSONArray("daily_statuses"))
             if (dailyStatuses.isNotEmpty()) database.dailyStatusDao().insertAll(dailyStatuses)
@@ -485,6 +502,50 @@ class BackupRepository(
                     status = item.getString("status"),
                     createdAt = item.getString("created_at"),
                     updatedAt = item.optString("updated_at", item.getString("created_at"))
+                )
+            )
+        }
+        return items
+    }
+
+    private fun violationRecordsToJson(items: List<ViolationRecordEntity>): JSONArray {
+        val array = JSONArray()
+        items.forEach { item ->
+            array.put(
+                JSONObject()
+                    .put("id", item.id)
+                    .put("ref_key", item.refKey)
+                    .put("source", item.source)
+                    .put("project_id", item.projectId)
+                    .put("date", item.date)
+                    .put("detail", item.detail)
+                    .put("created_at", item.createdAt)
+                    .put("deleted", item.deleted)
+                    .put("deleted_at", item.deletedAt)
+                    .put("delete_reason", item.deleteReason)
+                    .put("payment_record_id", item.paymentRecordId)
+            )
+        }
+        return array
+    }
+
+    private fun readViolationRecords(array: JSONArray): List<ViolationRecordEntity> {
+        val items = mutableListOf<ViolationRecordEntity>()
+        for (index in 0 until array.length()) {
+            val item = array.getJSONObject(index)
+            items.add(
+                ViolationRecordEntity(
+                    id = item.getLong("id"),
+                    refKey = item.getString("ref_key"),
+                    source = item.getString("source"),
+                    projectId = item.optLong("project_id", 0),
+                    date = item.optString("date"),
+                    detail = item.optString("detail"),
+                    createdAt = item.getString("created_at"),
+                    deleted = item.optInt("deleted", 0),
+                    deletedAt = item.optString("deleted_at"),
+                    deleteReason = item.optString("delete_reason"),
+                    paymentRecordId = item.optLong("payment_record_id", 0)
                 )
             )
         }

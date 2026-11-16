@@ -20,10 +20,6 @@ class ConfigRepository(
         return configDao.getValue("context_summary_prompt") ?: DEFAULT_CONTEXT_SUMMARY_PROMPT
     }
 
-    fun observeViolationCount(): Flow<String?> {
-        return configDao.observeValue("violation_count")
-    }
-
     suspend fun getValue(key: String): String? {
         return configDao.getValue(key)
     }
