@@ -26,6 +26,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
@@ -51,6 +52,7 @@ import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.material3.Icon
 import androidx.compose.ui.res.painterResource
 import com.composables.icons.lucide.R as LucideR
+import com.xdl.upward.domain.QuickReplies
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -138,6 +140,7 @@ fun ProjectDetailScreen(
     val messagesFlow = remember(projectId) { viewModel.observeMessages(projectId) }
     val messages by messagesFlow.collectAsStateWithLifecycle(initialValue = emptyList())
     val input by viewModel.input.collectAsStateWithLifecycle()
+    val quickReplies by viewModel.quickReplies.collectAsStateWithLifecycle()
     val loading by viewModel.loading.collectAsStateWithLifecycle()
     val aiThinking by viewModel.aiThinking.collectAsStateWithLifecycle()
     val errorMessage by viewModel.errorMessage.collectAsStateWithLifecycle()
@@ -387,6 +390,8 @@ fun ProjectDetailScreen(
                 }
             },
             onToggleCasual = { casualMode = !casualMode },
+            quickReplies = quickReplies,
+            onPickQuickReply = viewModel::updateInput,
             onSend = { viewModel.sendUserMessage(projectId, criticalMode, experienceMode, casualMode) },
             onStop = { viewModel.stopUserMessage(projectId) }
         )
@@ -599,10 +604,23 @@ private fun ProjectChatInputBar(
     onToggleCritical: () -> Unit,
     onToggleExperience: () -> Unit,
     onToggleCasual: () -> Unit,
+    quickReplies: QuickReplies?,
+    onPickQuickReply: (String) -> Unit,
     onSend: () -> Unit,
     onStop: () -> Unit
 ) {
     val activeColor = Color(0xFF2E7D32)
+    var showQuickReplies by remember { mutableStateOf(false) }
+    if (showQuickReplies) {
+        QuickReplyDialog(
+            quickReplies = quickReplies,
+            onPick = {
+                onPickQuickReply(it)
+                showQuickReplies = false
+            },
+            onDismiss = { showQuickReplies = false }
+        )
+    }
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -741,6 +759,18 @@ private fun ProjectChatInputBar(
                         modifier = Modifier.size(20.dp)
                     )
                 }
+                IconButton(
+                    onClick = { showQuickReplies = true },
+                    enabled = !loading
+                ) {
+                    Icon(
+                        painter = painterResource(LucideR.drawable.lucide_ic_sparkles),
+                        contentDescription = "快捷回复",
+                        // 有 AI 生成的快捷回复时高亮
+                        tint = if (quickReplies != null) activeColor else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
             }
             val canSend = !loading && (input.isNotBlank() || selectedImagePaths.isNotEmpty())
             Box(
@@ -767,6 +797,57 @@ private fun ProjectChatInputBar(
             }
         }
     }
+}
+
+@Composable
+private fun QuickReplyDialog(
+    quickReplies: QuickReplies?,
+    onPick: (String) -> Unit,
+    onDismiss: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("快捷回复") },
+        text = {
+            if (quickReplies == null) {
+                Text(
+                    "还没有快捷回复。AI 指定下一次汇报时间时会一并生成，按你的状态好 / 一般 / 差各给 3 句。",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            } else {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 420.dp)
+                        .verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    listOf(
+                        Triple("状态好", quickReplies.good, Color(0xFF2E7D32)),
+                        Triple("状态一般", quickReplies.medium, Color(0xFFF9A825)),
+                        Triple("状态差", quickReplies.bad, MaterialTheme.colorScheme.error)
+                    ).forEach { (label, items, color) ->
+                        if (items.isNotEmpty()) {
+                            Text(label, color = color, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                            items.forEach { text ->
+                                Text(
+                                    text = text,
+                                    fontSize = 14.sp,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f))
+                                        .clickable { onPick(text) }
+                                        .padding(horizontal = 10.dp, vertical = 8.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("关闭") } }
+    )
 }
 
 @Composable

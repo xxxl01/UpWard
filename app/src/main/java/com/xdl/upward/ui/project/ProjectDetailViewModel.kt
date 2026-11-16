@@ -7,6 +7,7 @@ import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.xdl.upward.data.local.AppDatabase
+import com.xdl.upward.domain.QuickReplies
 import com.xdl.upward.data.local.MessageEntity
 import com.xdl.upward.data.local.ProjectEntity
 import com.xdl.upward.data.remote.AiApiService
@@ -75,6 +76,11 @@ class ProjectDetailViewModel(application: Application) : AndroidViewModel(applic
     val errorMessage: StateFlow<String> = _errorMessage.asStateFlow()
 
     private var currentProjectId = 0L
+    private var quickRepliesJob: Job? = null
+
+    // 当前项目最近一次 AI 生成的快捷回复（状态好/一般/差各 3 句）
+    private val _quickReplies = MutableStateFlow<QuickReplies?>(null)
+    val quickReplies: StateFlow<QuickReplies?> = _quickReplies.asStateFlow()
     private var chatStateJob: Job? = null
 
     init {
@@ -88,6 +94,12 @@ class ProjectDetailViewModel(application: Application) : AndroidViewModel(applic
     // 绑定当前项目：把聊天执行状态（loading/思考中/错误）从后台执行器透传到本页面的状态流。
     // 聊天请求由 ChatExecutor 在进程级作用域里执行，退出页面后仍在跑，回到页面时从这里恢复显示。
     fun setCurrentProject(projectId: Long) {
+        quickRepliesJob?.cancel()
+        quickRepliesJob = viewModelScope.launch {
+            database.configDao().observeValue(QuickReplies.configKey(projectId)).collect {
+                _quickReplies.value = QuickReplies.fromJson(it)
+            }
+        }
         if (currentProjectId == projectId) return
         currentProjectId = projectId
         chatStateJob?.cancel()

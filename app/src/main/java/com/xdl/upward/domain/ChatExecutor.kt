@@ -234,7 +234,8 @@ object ChatExecutor {
                         ```
 
                         如果你决定强制指定下一次汇报时间，在 jsonl 代码块中写一行：
-                         {"name":"set_next_resume_time","arguments":{"start_at":"ISO-8601 时间"}}
+                         {"name":"set_next_resume_time","arguments":{"start_at":"ISO-8601 时间","quick_replies":{"good":["句子1","句子2","句子3"],"medium":["句子1","句子2","句子3"],"bad":["句子1","句子2","句子3"]}}}
+                         quick_replies 是给用户到点汇报时用的快捷回复：good / medium / bad 分别对应用户状态好 / 一般 / 差，每档恰好 3 句，共 9 句。每句都是用户视角、第一人称、可以直接发给你的一句完整回复，要结合当前项目和上下文写得具体自然、有个人口吻，不要只是“状态很好”“状态一般”“状态很差”这类死板的模板句，同一档的 3 句要有区别。必须写在同一行 JSON 里，不要换行。
                          工具规则：AI 只能填写 start_at，系统会把结束时间固定为开始时间之后 25 分钟，AI 提供的 end_at 会被忽略。start_at 不能早于当前时间；已有汇报时间时，既可以提前，也可以延后。只在确实要安排恢复窗口时调用一次；窗口结束且用户未回复时会记一次违规并清除窗口，不会自动开启新窗口。
                         """.trimIndent()
                     )
@@ -573,7 +574,15 @@ object ChatExecutor {
         }
         deps.repository.setNextRequiredMessagePeriod(projectId, startAt.toString(), endAt.toString())
         RequiredMessageReminderScheduler.schedule(deps.appContext, projectId, startAt.toString(), endAt.toString())
-        return "工具已执行：已指定下次恢复时间 ${startAt.toLocalDate()} ${startAt.toLocalTime()} - ${endAt.toLocalDate()} ${endAt.toLocalTime()}。"
+        // 同一次调用里带的快捷回复：存起来供输入框旁的图标选择
+        val quickReplies = QuickReplies.fromToolArguments(arguments.optJSONObject("quick_replies"))
+        val quickNote = if (quickReplies != null) {
+            deps.configRepository.setValue(QuickReplies.configKey(projectId), quickReplies.toJson())
+            "，并更新了 ${quickReplies.total()} 条快捷回复"
+        } else {
+            ""
+        }
+        return "工具已执行：已指定下次恢复时间 ${startAt.toLocalDate()} ${startAt.toLocalTime()} - ${endAt.toLocalDate()} ${endAt.toLocalTime()}$quickNote。"
     }
 
     // 执行“完成今日挑战”工具：AI 判断用户当天达成目标后为当天打卡。
