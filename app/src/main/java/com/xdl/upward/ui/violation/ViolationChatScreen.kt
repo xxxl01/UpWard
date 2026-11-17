@@ -194,7 +194,7 @@ fun ViolationChatScreen(
                     if (leaveDateThisWeek.isEmpty()) {
                         "请假会清除所有项目当前的汇报窗口，本周（周一到周日）只能请假一次。已经过期未汇报的窗口仍会照常记违规。确认请假？"
                     } else {
-                        "本周已经在 $leaveDateThisWeek 请过假了，下周一凌晨 4 点后可再次请假。"
+                        "本周已经在 $leaveDateThisWeek 请过假了，下周一 0 点后可再次请假。"
                     }
                 )
             },

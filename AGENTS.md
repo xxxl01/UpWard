@@ -30,7 +30,7 @@ Android 原生单模块应用（`:app`，包名 `com.xdl.upward`）：按项目�
   - 挑战失败惩罚固定为捐款 3 元（`ChallengeViewModel.FIXED_FAIL_PENALTY`），通过后该挑战 failed → settled，并把结算当天（在挑战周期内时）自动记为已打卡，避免当天一直悬着“未打卡”（违规惩罚连带结算同样处理）；AI 不能结算挑战（已移除 `settle_failed_challenge` 工具）。
   - 违规惩罚通过后：金额取整 N 元，先付清超期罚款，剩余按 1 元抵 1 次逻辑删除最早的有效违规；不再连带结算失败中的挑战（挑战失败惩罚仍需单独捐 3 元）。已移除违规告诫 AI 对话与 `reset_violation_count` 工具。
   - 识别用当前选中的 API（需 `supportImage`），否则用其视觉辅助模型；都没有则直接报错。
-- 请假：违规惩罚页标题栏的请假按钮（`ViolationChatViewModel.requestLeave`），每个自然周（周一~周日，凌晨 4 点换日）一次，记录在 config `leave_last_date`。效果是清除所有项目的汇报窗口并取消提醒；清除前先对每个项目跑 `RequiredMessageDeadlineHandler.checkAndRecord`，已过期未汇报的窗口照常记违规；没有窗口可清时不消耗次数。
+- 请假：违规惩罚页标题栏的请假按钮（`ViolationChatViewModel.requestLeave`），每个自然周（周一~周日，24 点换日）一次，记录在 config `leave_last_date`。效果是清除所有项目的汇报窗口并取消提醒；清除前先对每个项目跑 `RequiredMessageDeadlineHandler.checkAndRecord`，已过期未汇报的窗口照常记违规；没有窗口可清时不消耗次数。
 - 挑战可设过渡期：`challenge.transition_end_date`（含当天，空 = 无过渡期，范围 开始日期 ≤ x < 截止日期）。今天处于过渡期时，`ChatExecutor.buildChallengeSystemMessage` 会在提示词里写明“日期1 ~ 日期2 是过渡期，今天是 xxx，属于过渡期”。已开始的挑战只能提前结束或取消过渡期，不能新增或延长。
 - 全局提醒时间存在 config 表：`global_reminder_morning_time` / `afternoon` / `evening`（默认 07:00 / 13:00 / 19:30）；`reminder/GlobalReminderScheduler.kt` 用 `setExactAndAllowWhileIdle` 排程，Android 13+ 需要用户授予精确闹钟权限。`MainActivity.onCreate` 会初始化 config 并 reschedule。
 - Manifest 已开 `usesCleartextTraffic="true"`，允许 http 明文 AI 接口（局域网/127.0.0.1 地址）。
@@ -42,9 +42,11 @@ Android 原生单模块应用（`:app`，包名 `com.xdl.upward`）：按项目�
 
 ## 每日达标记录
 
+- **换日时间是 24 点（0 点）**：打卡日就是自然日，时段为 0-13 / 13-19:30 / 19:30-24（`ChallengeRepository.currentCheckInDate` 等）。曾经是凌晨 4 点换日，2.8 起改回。
+
 - **追踪起点**：config `tracking_start_at` 在更新后第一次运行 `DailyStatusRecorder` 时写入（打开/覆盖安装/开机/闹钟），此前已结束的时段不回溯、不落库、不记违规。连续全勤奖励（`applyStreakReward`，不按自然周）：追踪起点之后的整天里，当天有打卡成功且无失败、无违规记录则连续天数 +1，有失败/违规则清零，没有打卡记录的天不增不减；每攒满 7 天减免 1 次违规并重新计数（config `clean_streak_days` / `clean_streak_last_date`）。
 - `daily_status` 表：(项目, 打卡日, 组件 morning/afternoon/evening/daily/challenge) 唯一；`DailyStatusDao.record` 规则：无记录则新增，pending 才可升级为 success/failed，已定的不再改。
-- 写入时机：发消息当下（`ChatExecutor.sendUserMessage` → `DailyStatusRecorder.recordMessageSent`）、挑战打卡当下、`DailyStatusScheduler` 在 04:00/13:00/19:30 后 30 秒的后台闹钟（`DailyStatusRecorder.sync` 补齐到昨天并记今天）、App 启动/开机/覆盖安装、打开首页。
+- 写入时机：发消息当下（`ChatExecutor.sendUserMessage` → `DailyStatusRecorder.recordMessageSent`）、挑战打卡当下、`DailyStatusScheduler` 在 00:00/13:00/19:30 后 30 秒的后台闹钟（`DailyStatusRecorder.sync` 补齐到昨天并记今天）、App 启动/开机/覆盖安装、打开首页。
 
 ## 通知记录
 

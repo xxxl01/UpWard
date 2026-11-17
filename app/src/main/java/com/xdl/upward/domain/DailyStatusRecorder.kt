@@ -55,7 +55,7 @@ object DailyStatusRecorder {
         applyStreakReward(context, today)
     }
 
-    /** 追踪起点（首次运行时写入）；打卡日口径（凌晨 4 点换日）。 */
+    /** 追踪起点（首次运行时写入）；打卡日口径（24 点换日，即自然日）。 */
     suspend fun trackingStartAt(configRepository: ConfigRepository): OffsetDateTime {
         configRepository.getValue(KEY_TRACKING_START)
             ?.let { runCatching { OffsetDateTime.parse(it) }.getOrNull() }
@@ -67,7 +67,7 @@ object DailyStatusRecorder {
 
     private suspend fun trackingStartDate(configRepository: ConfigRepository): LocalDate {
         val at = trackingStartAt(configRepository)
-        return if (at.toLocalTime().isBefore(java.time.LocalTime.of(4, 0))) at.toLocalDate().minusDays(1) else at.toLocalDate()
+        return if (at.toLocalTime().isBefore(java.time.LocalTime.MIDNIGHT)) at.toLocalDate().minusDays(1) else at.toLocalDate()
     }
 
     /**
@@ -158,7 +158,7 @@ object DailyStatusRecorder {
             dao.record(projectId, dateText, "daily", "once_per_day", DailyStatusEntity.SUCCESS)
             return
         }
-        val dayStart = date.atTime(4, 0).atOffset(now.offset)
+        val dayStart = date.atTime(0, 0).atOffset(now.offset)
         val noon = date.atTime(13, 0).atOffset(now.offset)
         val evening = date.atTime(19, 30).atOffset(now.offset)
         val (component, start) = when {
@@ -186,10 +186,10 @@ object DailyStatusRecorder {
             .associateBy { it.projectId to it.component }
         val now = OffsetDateTime.now()
         val offset = now.offset
-        val dayStart = date.atTime(4, 0).atOffset(offset)
+        val dayStart = date.atTime(0, 0).atOffset(offset)
         val noon = date.atTime(13, 0).atOffset(offset)
         val evening = date.atTime(19, 30).atOffset(offset)
-        val dayEnd = date.plusDays(1).atTime(4, 0).atOffset(offset)
+        val dayEnd = date.plusDays(1).atTime(0, 0).atOffset(offset)
         val trackingStart = trackingStartAt(configRepository)
 
         // 返回 Pair(是否适用, 状态)；start/end 为该时段窗口。

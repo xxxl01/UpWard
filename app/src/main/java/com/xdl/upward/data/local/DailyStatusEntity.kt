@@ -22,7 +22,7 @@ data class DailyStatusEntity(
     val id: Long = 0,
     @ColumnInfo(name = "project_id")
     val projectId: Long,
-    // 打卡日（凌晨 4 点换日），格式 yyyy-MM-dd
+    // 打卡日（24 点换日，即自然日），格式 yyyy-MM-dd
     val date: String,
     val component: String,
     val type: String,
