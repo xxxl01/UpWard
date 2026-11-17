@@ -119,7 +119,7 @@ class GlobalReminderReceiver : BroadcastReceiver() {
         }
     }
 
-    private fun showNotification(context: Context, period: String, dateText: String): String {
+    private suspend fun showNotification(context: Context, period: String, dateText: String): String {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
             ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
         ) {
@@ -153,6 +153,9 @@ class GlobalReminderReceiver : BroadcastReceiver() {
             .build()
 
         manager.notify(notificationId(period), notification)
+        com.xdl.upward.domain.NotificationLog.record(
+            context, com.xdl.upward.domain.NotificationLog.KIND_GLOBAL_REMINDER, "提醒一下", "$periodName 该看看进展了"
+        )
         return "通知已提交给系统"
     }
 

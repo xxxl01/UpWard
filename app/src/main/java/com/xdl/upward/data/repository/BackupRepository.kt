@@ -7,6 +7,7 @@ import com.xdl.upward.data.local.AiApiEntity
 import com.xdl.upward.data.local.AppDatabase
 import com.xdl.upward.data.local.ChallengeCheckInEntity
 import com.xdl.upward.data.local.DailyStatusEntity
+import com.xdl.upward.data.local.NotificationRecordEntity
 import com.xdl.upward.data.local.ViolationRecordEntity
 import com.xdl.upward.data.local.ChallengeEntity
 import com.xdl.upward.data.local.ConfigEntity
@@ -96,6 +97,7 @@ class BackupRepository(
             .put("challenges", challengesToJson(database.challengeDao().getAllForBackup()))
             .put("challenge_checkins", challengeCheckInsToJson(database.challengeCheckInDao().getAllForBackup()))
             .put("payment_records", paymentRecords)
+            .put("notification_records", notificationRecordsToJson(database.notificationRecordDao().getAllForBackup()))
             .put("violation_records", violationRecordsToJson(database.violationRecordDao().getAllForBackup()))
             .put("daily_statuses", dailyStatusesToJson(database.dailyStatusDao().getAllForBackup()))
 
@@ -186,6 +188,7 @@ class BackupRepository(
             database.paymentRecordDao().deleteAll()
             database.dailyStatusDao().deleteAll()
             database.violationRecordDao().deleteAll()
+            database.notificationRecordDao().deleteAll()
 
             val projects = readProjects(json.getJSONArray("projects"))
             if (projects.isNotEmpty()) database.projectDao().insertAll(projects)
@@ -203,6 +206,8 @@ class BackupRepository(
             // 旧备份没有 payment_records，optJSONArray 兜底为空
             val paymentRecords = readPaymentRecords(json.optJSONArray("payment_records"), restoredImagePaths)
             if (paymentRecords.isNotEmpty()) database.paymentRecordDao().insertAll(paymentRecords)
+            val notificationRecords = readNotificationRecords(json.optJSONArray("notification_records"))
+            if (notificationRecords.isNotEmpty()) database.notificationRecordDao().insertAll(notificationRecords)
             val violationArray = json.optJSONArray("violation_records")
             if (violationArray != null) {
                 val records = readViolationRecords(violationArray)
@@ -546,6 +551,43 @@ class BackupRepository(
                     deletedAt = item.optString("deleted_at"),
                     deleteReason = item.optString("delete_reason"),
                     paymentRecordId = item.optLong("payment_record_id", 0)
+                )
+            )
+        }
+        return items
+    }
+
+    private fun notificationRecordsToJson(items: List<NotificationRecordEntity>): JSONArray {
+        val array = JSONArray()
+        items.forEach { item ->
+            array.put(
+                JSONObject()
+                    .put("id", item.id)
+                    .put("kind", item.kind)
+                    .put("title", item.title)
+                    .put("content", item.content)
+                    .put("project_id", item.projectId)
+                    .put("date", item.date)
+                    .put("created_at", item.createdAt)
+            )
+        }
+        return array
+    }
+
+    private fun readNotificationRecords(array: JSONArray?): List<NotificationRecordEntity> {
+        if (array == null) return emptyList()
+        val items = mutableListOf<NotificationRecordEntity>()
+        for (index in 0 until array.length()) {
+            val item = array.getJSONObject(index)
+            items.add(
+                NotificationRecordEntity(
+                    id = item.getLong("id"),
+                    kind = item.getString("kind"),
+                    title = item.optString("title"),
+                    content = item.optString("content"),
+                    projectId = item.optLong("project_id", 0),
+                    date = item.getString("date"),
+                    createdAt = item.getString("created_at")
                 )
             )
         }

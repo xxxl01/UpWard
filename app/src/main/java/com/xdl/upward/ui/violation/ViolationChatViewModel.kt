@@ -14,7 +14,11 @@ import com.xdl.upward.domain.PaymentVerifier
 import com.xdl.upward.reminder.RequiredMessageDeadlineHandler
 import com.xdl.upward.reminder.RequiredMessageReminderScheduler
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -28,6 +32,7 @@ import java.time.temporal.WeekFields
  * 违规惩罚页：不再与 AI 对话。用户上传捐款截图，由 PaymentVerifier 识别并按本地规则判定，
  * 通过后违规次数抵扣 10 次，并一并结算所有失败惩罚中的挑战。
  */
+@OptIn(ExperimentalCoroutinesApi::class)
 class ViolationChatViewModel(application: Application) : AndroidViewModel(application) {
     private val database = AppDatabase.getInstance(application)
     private val configRepository = ConfigRepository(database.configDao())
@@ -45,15 +50,35 @@ class ViolationChatViewModel(application: Application) : AndroidViewModel(applic
     private val _violationCount = MutableStateFlow(0)
     val violationCount: StateFlow<Int> = _violationCount.asStateFlow()
 
-    // 所有通过审核的捐款记录（挑战惩罚与违规惩罚都展示，方便回看）。
-    val paymentRecords: StateFlow<List<PaymentRecordEntity>> = database.paymentRecordDao()
-        .observeAll()
+    // 违规记录与捐款记录都按月份分页：只在“有记录的月份”之间翻页（0 = 最新月份），避免数据多了一直往下滑。
+    private val _paymentMonthIndex = MutableStateFlow(0)
+    val paymentMonthIndex: StateFlow<Int> = _paymentMonthIndex.asStateFlow()
+    val paymentMonths: StateFlow<List<String>> = database.paymentRecordDao().observeMonths()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+    val paymentRecords: StateFlow<List<PaymentRecordEntity>> = combine(paymentMonths, _paymentMonthIndex) { months, index ->
+        months.getOrNull(index.coerceIn(0, (months.size - 1).coerceAtLeast(0)))
+    }.flatMapLatest { month ->
+        if (month == null) flowOf(emptyList()) else database.paymentRecordDao().observeByMonth(month)
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
-    // 全部违规记录（含已抵扣/清零的逻辑删除记录），新的在前。
-    val violationRecords: StateFlow<List<ViolationRecordEntity>> = database.violationRecordDao()
-        .observeAll()
+    private val _violationMonthIndex = MutableStateFlow(0)
+    val violationMonthIndex: StateFlow<Int> = _violationMonthIndex.asStateFlow()
+    val violationMonths: StateFlow<List<String>> = database.violationRecordDao().observeMonths()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+    val violationRecords: StateFlow<List<ViolationRecordEntity>> = combine(violationMonths, _violationMonthIndex) { months, index ->
+        months.getOrNull(index.coerceIn(0, (months.size - 1).coerceAtLeast(0)))
+    }.flatMapLatest { month ->
+        if (month == null) flowOf(emptyList()) else database.violationRecordDao().observeByMonth(month)
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    // delta > 0 往更早的月份翻，< 0 往更新的月份翻
+    fun shiftViolationMonth(delta: Int) {
+        _violationMonthIndex.value = (_violationMonthIndex.value + delta).coerceIn(0, (violationMonths.value.size - 1).coerceAtLeast(0))
+    }
+
+    fun shiftPaymentMonth(delta: Int) {
+        _paymentMonthIndex.value = (_paymentMonthIndex.value + delta).coerceIn(0, (paymentMonths.value.size - 1).coerceAtLeast(0))
+    }
 
     // 超期罚款（元）：进入惩罚状态后超过一天未捐款，每满一天 +5 元。
     private val _surchargeYuan = MutableStateFlow(0)

@@ -18,7 +18,9 @@ import java.time.OffsetDateTime
 object DailyStatusRecorder {
     private const val KEY_SYNCED_DATE = "daily_status_synced_date"
     private const val KEY_TRACKING_START = "tracking_start_at"
-    private const val KEY_WEEKLY_REWARD = "weekly_reward_last_week_start"
+    private const val KEY_STREAK_LAST = "clean_streak_last_date"
+    private const val KEY_STREAK_DAYS = "clean_streak_days"
+    private const val STREAK_DAYS = 7
     private const val MAX_BACKFILL_DAYS = 90L
     private val mutex = Mutex()
 
@@ -50,7 +52,7 @@ object DailyStatusRecorder {
         }
         computeAndPersist(context, today)
         recordViolations(context, today)
-        applyWeeklyReward(context, today)
+        applyStreakReward(context, today)
     }
 
     /** 追踪起点（首次运行时写入）；打卡日口径（凌晨 4 点换日）。 */
@@ -69,30 +71,40 @@ object DailyStatusRecorder {
     }
 
     /**
-     * 周全勤奖励：每个自然周（周一~周日）结束后，若这一周有打卡记录、没有任何失败/缺卡、也没有违规记录，
-     * 逻辑删除最早的 1 条有效违规（原因 weekly_reward）。追踪起点所在的不完整周不算。
+     * 连续全勤奖励：从追踪起点后的第一个整天开始，按天累计“连续无缺卡”的天数——
+     * 当天有打卡成功、没有任何失败/缺卡、也没有违规记录，连续天数 +1；当天有失败或违规则清零；
+     * 当天没有任何打卡记录（比如没有项目）不增不减。每攒满 7 天，逻辑删除最早的 1 条有效违规
+     * （原因 streak_reward），然后重新开始数。不要求周一开始、周日结束。
      */
-    private suspend fun applyWeeklyReward(context: Context, today: LocalDate) {
+    private suspend fun applyStreakReward(context: Context, today: LocalDate) {
         val database = AppDatabase.getInstance(context)
         val configRepository = ConfigRepository(database.configDao())
         val startDate = trackingStartDate(configRepository)
-        val last = configRepository.getValue(KEY_WEEKLY_REWARD)?.let { runCatching { LocalDate.parse(it) }.getOrNull() }
-        var weekStart = startDate.with(java.time.temporal.TemporalAdjusters.next(java.time.DayOfWeek.MONDAY))
-        if (last != null && !last.plusWeeks(1).isBefore(weekStart)) weekStart = last.plusWeeks(1)
+        val yesterday = today.minusDays(1)
+        val last = configRepository.getValue(KEY_STREAK_LAST)?.let { runCatching { LocalDate.parse(it) }.getOrNull() } ?: startDate
+        var streak = configRepository.getValue(KEY_STREAK_DAYS)?.toIntOrNull() ?: 0
         val statusDao = database.dailyStatusDao()
         val violationDao = database.violationRecordDao()
-        while (!weekStart.plusDays(6).isAfter(today.minusDays(1))) {
-            val from = weekStart.toString()
-            val to = weekStart.plusDays(6).toString()
-            val failed = statusDao.countByStatus(from, to, DailyStatusEntity.FAILED)
-            val success = statusDao.countByStatus(from, to, DailyStatusEntity.SUCCESS)
-            val violations = violationDao.countByDateRange(from, to)
-            if (failed == 0 && success > 0 && violations == 0) {
-                violationDao.logicalDeleteOldest(1, OffsetDateTime.now().toString(), "weekly_reward", 0)
+        var date = last.plusDays(1)
+        if (date.isAfter(yesterday)) return
+        while (!date.isAfter(yesterday)) {
+            val day = date.toString()
+            val failed = statusDao.countByStatus(day, day, DailyStatusEntity.FAILED)
+            val success = statusDao.countByStatus(day, day, DailyStatusEntity.SUCCESS)
+            val violations = violationDao.countByDateRange(day, day)
+            if (failed > 0 || violations > 0) {
+                streak = 0
+            } else if (success > 0) {
+                streak++
+                if (streak >= STREAK_DAYS) {
+                    violationDao.logicalDeleteOldest(1, OffsetDateTime.now().toString(), "streak_reward", 0)
+                    streak = 0
+                }
             }
-            configRepository.setValue(KEY_WEEKLY_REWARD, from)
-            weekStart = weekStart.plusWeeks(1)
+            date = date.plusDays(1)
         }
+        configRepository.setValue(KEY_STREAK_DAYS, streak.toString())
+        configRepository.setValue(KEY_STREAK_LAST, yesterday.toString())
     }
 
     /**

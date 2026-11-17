@@ -64,6 +64,10 @@ fun ViolationChatScreen(
     val records by viewModel.paymentRecords.collectAsStateWithLifecycle()
     val surchargeYuan by viewModel.surchargeYuan.collectAsStateWithLifecycle()
     val violationRecords by viewModel.violationRecords.collectAsStateWithLifecycle()
+    val violationMonths by viewModel.violationMonths.collectAsStateWithLifecycle()
+    val violationMonthIndex by viewModel.violationMonthIndex.collectAsStateWithLifecycle()
+    val paymentMonths by viewModel.paymentMonths.collectAsStateWithLifecycle()
+    val paymentMonthIndex by viewModel.paymentMonthIndex.collectAsStateWithLifecycle()
     var selectedTab by remember { mutableStateOf(0) }
     var filter by remember { mutableStateOf(1) }
     val verifying by viewModel.verifying.collectAsStateWithLifecycle()
@@ -138,16 +142,17 @@ fun ViolationChatScreen(
             Tab(
                 selected = selectedTab == 0,
                 onClick = { selectedTab = 0 },
-                text = { Text("违规记录 ${violationRecords.size}") }
+                text = { Text("违规记录") }
             )
             Tab(
                 selected = selectedTab == 1,
                 onClick = { selectedTab = 1 },
-                text = { Text("捐款记录 ${records.size}") }
+                text = { Text("捐款记录") }
             )
         }
 
         if (selectedTab == 0) {
+            MonthSwitcher(violationMonths, violationMonthIndex) { viewModel.shiftViolationMonth(it) }
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -170,6 +175,7 @@ fun ViolationChatScreen(
                 }
             }
         } else {
+            MonthSwitcher(paymentMonths, paymentMonthIndex) { viewModel.shiftPaymentMonth(it) }
             RecordList(isEmpty = records.isEmpty(), emptyText = "暂无捐款记录") {
                 items(records, key = { it.id }) { record ->
                     PaymentRecordItem(record)
@@ -243,6 +249,20 @@ private fun ColumnScope.RecordList(
 }
 
 @Composable
+private fun MonthSwitcher(months: List<String>, index: Int, onShift: (Int) -> Unit) {
+    if (months.isEmpty()) return
+    val current = index.coerceIn(0, months.size - 1)
+    com.xdl.upward.ui.config.PageSwitcher(
+        label = months[current],
+        position = "${current + 1}/${months.size}",
+        hasOlder = current < months.size - 1,
+        hasNewer = current > 0,
+        onOlder = { onShift(1) },
+        onNewer = { onShift(-1) }
+    )
+}
+
+@Composable
 private fun FilterOption(label: String, selected: Boolean, onClick: () -> Unit) {
     Text(
         text = label,
@@ -262,7 +282,7 @@ private fun ViolationRecordItem(record: ViolationRecordEntity) {
     val statusText = when {
         active -> "有效"
         record.deleteReason == "payment" -> "已抵扣"
-        record.deleteReason == "weekly_reward" -> "周全勤减免"
+        record.deleteReason == "streak_reward" || record.deleteReason == "weekly_reward" -> "连续7天全勤减免"
         record.deleteReason == "monthly_reset" -> "月度清零"
         else -> "已删除"
     }
@@ -396,7 +416,7 @@ private fun ViolationWarningBanner(violationCount: Int, surchargeYuan: Int) {
         val fine = if (surchargeYuan > 0) "已超期未捐款，需先付清罚款 $surchargeYuan 元（每满一天 +5 元），再加上要抵扣的次数。" else "超过一天未捐款，每满一天罚款 +5 元。"
         "所有项目已拦截消息发送。请向公益慈善机构捐款并上传包含交易单号的截图，1 元抵扣 1 次违规。$fine 每笔捐款只能使用一次。"
     } else {
-        "每次缺卡/失败记 1 次；累计 10 次触发惩罚（拦截所有项目消息发送）。捐款 1 元抵扣 1 次；连续一周没有缺卡减免 1 次。"
+        "每次缺卡/失败记 1 次；累计 10 次触发惩罚（拦截所有项目消息发送）。捐款 1 元抵扣 1 次；连续 7 天没有缺卡减免 1 次。"
     }
     Column(
         modifier = Modifier

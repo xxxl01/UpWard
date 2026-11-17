@@ -14,6 +14,13 @@ interface ViolationRecordDao {
     @Query("SELECT * FROM violation_record ORDER BY id DESC")
     fun observeAll(): Flow<List<ViolationRecordEntity>>
 
+    // 有违规记录的月份（按记录时间，yyyy-MM），新的在前，用于按月分页
+    @Query("SELECT DISTINCT substr(created_at, 1, 7) FROM violation_record ORDER BY 1 DESC")
+    fun observeMonths(): Flow<List<String>>
+
+    @Query("SELECT * FROM violation_record WHERE substr(created_at, 1, 7) = :month ORDER BY id DESC")
+    fun observeByMonth(month: String): Flow<List<ViolationRecordEntity>>
+
     @Query("SELECT COUNT(*) FROM violation_record WHERE deleted = 0")
     suspend fun activeCount(): Int
 

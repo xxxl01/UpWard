@@ -68,7 +68,7 @@ class RequiredMessageReminderReceiver : BroadcastReceiver() {
         RequiredMessageReminderScheduler.scheduleNext(context, project.id, nextTime.toInstant().toEpochMilli())
     }
 
-    private fun showNotification(
+    private suspend fun showNotification(
         context: Context,
         projectId: Long,
         projectName: String,
@@ -106,6 +106,13 @@ class RequiredMessageReminderReceiver : BroadcastReceiver() {
             .build()
 
         manager.notify((2000L + projectId).toInt(), notification)
+        com.xdl.upward.domain.NotificationLog.record(
+            context,
+            com.xdl.upward.domain.NotificationLog.KIND_REQUIRED_MESSAGE,
+            projectName,
+            "${startTime.format(DateTimeFormatter.ofPattern("MM-dd HH:mm"))} - ${endTime.format(DateTimeFormatter.ofPattern("MM-dd HH:mm"))}",
+            projectId
+        )
     }
 
     companion object {

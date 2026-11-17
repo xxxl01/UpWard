@@ -17,6 +17,7 @@ object AppRoute {
     const val PERMISSION_SETTINGS = "permission_settings"
     const val API_SETTINGS = "api_settings"
     const val VIOLATION_CHAT = "violation_chat"
+    const val NOTIFICATION_LOG = "notification_log"
 
     fun projectEdit(projectId: Long = 0L): String = "project_edit?projectId=$projectId"
 

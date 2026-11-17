@@ -14,6 +14,7 @@ import com.xdl.upward.ui.challenge.ChallengeScreen
 import com.xdl.upward.ui.config.ApiSettingsScreen
 import com.xdl.upward.ui.config.BackupSettingsScreen
 import com.xdl.upward.ui.config.ConfigSettingsScreen
+import com.xdl.upward.ui.config.NotificationLogScreen
 import com.xdl.upward.ui.config.GeneralSettingsScreen
 import com.xdl.upward.ui.config.HolidaySettingsScreen
 import com.xdl.upward.ui.config.PermissionSettingsScreen
@@ -68,7 +69,14 @@ fun AppNavGraph() {
                 onOpenHoliday = { navController.navigate(AppRoute.HOLIDAY_SETTINGS) },
                 onOpenBackup = { navController.navigate(AppRoute.BACKUP_SETTINGS) },
                 onOpenPermission = { navController.navigate(AppRoute.PERMISSION_SETTINGS) },
-                onOpenApi = { navController.navigate(AppRoute.API_SETTINGS) }
+                onOpenApi = { navController.navigate(AppRoute.API_SETTINGS) },
+                onOpenNotificationLog = { navController.navigate(AppRoute.NOTIFICATION_LOG) }
+            )
+        }
+
+        composable(AppRoute.NOTIFICATION_LOG) {
+            NotificationLogScreen(
+                onBack = { navController.popBackStack() }
             )
         }
 

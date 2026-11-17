@@ -11,6 +11,12 @@ interface PaymentRecordDao {
     @Query("SELECT * FROM payment_record ORDER BY id DESC")
     fun observeAll(): Flow<List<PaymentRecordEntity>>
 
+    @Query("SELECT DISTINCT substr(created_at, 1, 7) FROM payment_record ORDER BY 1 DESC")
+    fun observeMonths(): Flow<List<String>>
+
+    @Query("SELECT * FROM payment_record WHERE substr(created_at, 1, 7) = :month ORDER BY id DESC")
+    fun observeByMonth(month: String): Flow<List<PaymentRecordEntity>>
+
     @Query("SELECT * FROM payment_record WHERE purpose = :purpose ORDER BY id DESC")
     fun observeByPurpose(purpose: String): Flow<List<PaymentRecordEntity>>
 

@@ -26,7 +26,8 @@ fun ConfigSettingsScreen(
     onOpenHoliday: () -> Unit,
     onOpenBackup: () -> Unit,
     onOpenPermission: () -> Unit,
-    onOpenApi: () -> Unit
+    onOpenApi: () -> Unit,
+    onOpenNotificationLog: () -> Unit
 ) {
     Column(
         modifier = Modifier
@@ -57,6 +58,13 @@ fun ConfigSettingsScreen(
                 title = "提醒设置",
                 description = "上午、下午、晚上的定时提醒时间与提醒诊断。",
                 onClick = onOpenReminder
+            )
+            Spacer(modifier = Modifier.height(10.dp))
+            SettingsEntryItem(
+                icon = LucideR.drawable.lucide_ic_history,
+                title = "通知记录",
+                description = "查看推送过的通知：什么时候、什么内容，按日期翻页。",
+                onClick = onOpenNotificationLog
             )
             Spacer(modifier = Modifier.height(10.dp))
             SettingsEntryItem(
