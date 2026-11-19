@@ -22,7 +22,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         ViolationRecordEntity::class,
         NotificationRecordEntity::class
     ],
-    version = 21,
+    version = 22,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -347,6 +347,51 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        // 2.9 一次性清零：挑战重构 + 缺卡误判修复后，升级前累积的违规与挑战惩罚大量是误记的，全部清除，从头开始。
+        // 违规记录只做逻辑删除（保留历史），失败/缺卡中的挑战直接结算，连续全勤计数与追踪起点重置。
+        private val MIGRATION_21_22 = object : Migration(21, 22) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                val now = java.time.OffsetDateTime.now().toString()
+                val today = java.time.LocalDate.now()
+                db.execSQL(
+                    "UPDATE violation_record SET deleted = 1, deleted_at = ?, delete_reason = 'version_reset' WHERE deleted = 0",
+                    arrayOf(now)
+                )
+                // failed（惩罚中）→ settled；active 但已有缺卡的挑战同样直接结算，避免打开页面又被判失败
+                val toSettle = mutableListOf<Long>()
+                db.query("SELECT id, start_date, end_date, status FROM challenge WHERE status IN ('failed', 'active')").use { c ->
+                    while (c.moveToNext()) {
+                        val id = c.getLong(0)
+                        if (c.getString(3) == "failed") { toSettle.add(id); continue }
+                        val start = runCatching { java.time.LocalDate.parse(c.getString(1)) }.getOrNull() ?: continue
+                        val end = runCatching { java.time.LocalDate.parse(c.getString(2)) }.getOrNull() ?: continue
+                        val last = if (end.isBefore(today.minusDays(1))) end else today.minusDays(1)
+                        if (last.isBefore(start)) continue
+                        val done = mutableSetOf<String>()
+                        db.query("SELECT date FROM challenge_checkin WHERE challenge_id = ?", arrayOf<Any>(id)).use { k ->
+                            while (k.moveToNext()) done.add(k.getString(0))
+                        }
+                        var d = start
+                        while (!d.isAfter(last)) {
+                            if (d.toString() !in done) { toSettle.add(id); break }
+                            d = d.plusDays(1)
+                        }
+                    }
+                }
+                toSettle.forEach {
+                    db.execSQL("UPDATE challenge SET status = 'settled', finished_at = ? WHERE id = ?", arrayOf<Any>(now, it))
+                }
+                // 追踪起点重置为现在：此前的时段不再回溯；全勤计数清零
+                fun setConfig(key: String, value: String) {
+                    db.execSQL("DELETE FROM config WHERE `key` = ?", arrayOf<Any>(key))
+                    db.execSQL("INSERT INTO config (`key`, value) VALUES (?, ?)", arrayOf<Any>(key, value))
+                }
+                setConfig("tracking_start_at", now)
+                setConfig("clean_streak_days", "0")
+                setConfig("clean_streak_last_date", today.minusDays(1).toString())
+            }
+        }
+
         fun getInstance(context: Context): AppDatabase {
             return instance ?: synchronized(this) {
                 instance ?: Room.databaseBuilder(
@@ -354,7 +399,7 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     "upward.db"
                 )
-                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20, MIGRATION_20_21)
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22)
                     .addCallback(object : Callback() {
                         override fun onOpen(db: SupportSQLiteDatabase) {
                             super.onOpen(db)

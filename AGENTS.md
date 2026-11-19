@@ -17,7 +17,7 @@ Android 原生单模块应用（`:app`，包名 `com.xdl.upward`）：按项目�
 
 ## Room 数据库约定
 
-- `data/local/AppDatabase.kt` 中 `version = 21`，手写 Migration 1→21，**没有** `fallbackToDestructiveMigration`。修改实体字段时必须同步加对应 Migration，否则已装用户升级会直接 crash（Room 抛 IllegalStateException）。
+- `data/local/AppDatabase.kt` 中 `version = 22`，手写 Migration 1→22（21→22 是 2.9 一次性清零：违规全部逻辑删除 delete_reason=`version_reset`、失败/缺卡挑战直接结算、追踪起点与全勤计数重置，不要当 bug 修），**没有** `fallbackToDestructiveMigration`。修改实体字段时必须同步加对应 Migration，否则已装用户升级会直接 crash（Room 抛 IllegalStateException）。
 - 新 config 键的默认值要用 `onOpen` 回调里已有的 `INSERT ... WHERE NOT EXISTS` 模式注入。
 - `onOpen` 每次打开都会 `DELETE FROM config WHERE key = 'daily_record_prompt'`，这是有意行为，不要当 bug 修。
 
