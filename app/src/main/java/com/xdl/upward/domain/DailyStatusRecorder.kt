@@ -34,6 +34,11 @@ object DailyStatusRecorder {
         val challengeRepository = ChallengeRepository(database.challengeDao(), database.challengeCheckInDao())
         val today = challengeRepository.currentCheckInDate()
         val yesterday = today.minusDays(1)
+        // 先修复误写的数据：挑战日被当成普通日写入的缺卡记录及其违规
+        database.dailyStatusDao().getNormalOnChallengeDays().forEach { row ->
+            database.violationRecordDao().deleteByRefKey("checkin:${row.date}:${row.projectId}:${row.component}")
+            database.dailyStatusDao().deleteById(row.id)
+        }
         // 以本次更新后第一次打开（或覆盖安装）的时间为起点，之前的日子不回溯、不落库
         val startDate = trackingStartDate(configRepository)
         val synced = configRepository.getValue(KEY_SYNCED_DATE)?.let {
@@ -226,6 +231,17 @@ object DailyStatusRecorder {
 
         return repository.getProjects().map { project ->
             val challenge = challengeRepository.challengeOfDate(project.id, date)
+            val savedChallenge = saved[project.id to "challenge"]
+            // 以库里已记录的模式为准：那天已按挑战落库，就永远是挑战日（挑战记录被“开启新一轮”改了日期/清空打卡后，
+            // challengeOfDate 会返回 null，不能因此把历史挑战日当成普通日补写三次打卡的缺卡）。
+            if (challenge == null && savedChallenge != null) {
+                val r: Boolean? = when (savedChallenge.status) {
+                    DailyStatusEntity.SUCCESS -> true
+                    DailyStatusEntity.FAILED -> false
+                    else -> null
+                }
+                return@map ProjectYesterdayCheckStatus(project.name, "challenge", r, null, null, r == false, true)
+            }
             if (challenge != null) {
                 val old = saved[project.id to "challenge"]
                 val result: Boolean? = if (old != null && old.status != DailyStatusEntity.PENDING) {
@@ -248,6 +264,14 @@ object DailyStatusRecorder {
                 return@map ProjectYesterdayCheckStatus(project.name, "challenge", result, null, null, result == false, true)
             }
             val created = try { OffsetDateTime.parse(project.createdAt) } catch (e: Exception) { now }
+            // 过去的日子既没有挑战判定也没有任何落库记录：无法确认当时的模式（可能是已被改写的挑战），不凭空生成缺卡。
+            // 正常流程里每天都会在 00:00 同步时落库，所以真正的普通日一定已有记录。
+            val hasAnySaved = saved.keys.any { it.first == project.id }
+            if (!hasAnySaved && date.isBefore(challengeRepository.currentCheckInDate()) &&
+                challengeRepository.getByProjectId(project.id) != null
+            ) {
+                return@map ProjectYesterdayCheckStatus(project.name, project.checkInMode, null, null, null, false)
+            }
             if (project.checkInMode == "once_per_day") {
                 val r = windowStatus(project.id, "daily", "once_per_day", created, dayStart, dayEnd)
                 ProjectYesterdayCheckStatus(project.name, project.checkInMode, r, null, null, r == false)

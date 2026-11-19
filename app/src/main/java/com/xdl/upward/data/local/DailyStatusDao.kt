@@ -33,6 +33,17 @@ abstract class DailyStatusDao {
     @Query("UPDATE daily_status SET status = :status, updated_at = :updatedAt WHERE id = :id")
     abstract suspend fun updateStatus(id: Long, status: String, updatedAt: String)
 
+    /** 修复：同一项目同一天既有挑战记录又有普通时段记录时，普通时段记录是误写的（历史挑战日被当成普通日）。 */
+    @Query(
+        "SELECT * FROM daily_status WHERE component != 'challenge' AND EXISTS (" +
+            "SELECT 1 FROM daily_status c WHERE c.project_id = daily_status.project_id " +
+            "AND c.date = daily_status.date AND c.component = 'challenge')"
+    )
+    abstract suspend fun getNormalOnChallengeDays(): List<DailyStatusEntity>
+
+    @Query("DELETE FROM daily_status WHERE id = :id")
+    abstract suspend fun deleteById(id: Long)
+
     @Query("DELETE FROM daily_status WHERE project_id = :projectId")
     abstract suspend fun deleteByProjectId(projectId: Long)
 

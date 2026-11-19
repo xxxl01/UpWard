@@ -52,6 +52,9 @@ interface ViolationRecordDao {
     @Query("SELECT COUNT(*) FROM violation_record WHERE date >= :fromDate AND date <= :toDate")
     suspend fun countByDateRange(fromDate: String, toDate: String): Int
 
+    @Query("DELETE FROM violation_record WHERE ref_key = :refKey")
+    suspend fun deleteByRefKey(refKey: String)
+
     @Query("DELETE FROM violation_record")
     suspend fun deleteAll()
 }
