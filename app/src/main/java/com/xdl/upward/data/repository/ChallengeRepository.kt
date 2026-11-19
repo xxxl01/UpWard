@@ -53,22 +53,25 @@ class ChallengeRepository(
     // endDate 卡住上界：挑战期结束后的日子恢复普通打卡；
     // 终态挑战再用 finishedAt（状态变更时刻）卡一次：挑战中途失败时，失败当天仍算挑战日，次日起恢复普通模式。
     suspend fun challengeOfDate(projectId: Long, date: LocalDate): ChallengeEntity? {
-        val challenge = challengeDao.getByProjectId(projectId) ?: return null
-        if (date.isBefore(LocalDate.parse(challenge.startDate)) || date.isAfter(LocalDate.parse(challenge.endDate))) return null
-        if (challenge.status == STATUS_ACTIVE) return challenge
+        // 每轮挑战一行：在所有轮次里找覆盖这一天的那一轮（后开的轮次优先）
+        return challengeDao.getAllByProjectId(projectId).asReversed().firstOrNull { covers(it, date) }
+    }
 
+    private fun covers(challenge: ChallengeEntity, date: LocalDate): Boolean {
+        if (date.isBefore(LocalDate.parse(challenge.startDate)) || date.isAfter(LocalDate.parse(challenge.endDate))) return false
+        if (challenge.status == STATUS_ACTIVE) return true
         val finishedTime = try {
             OffsetDateTime.parse(challenge.finishedAt)
         } catch (e: Exception) {
             // 旧数据没有 finishedAt：整个挑战周期都按挑战日算，宁可豁免也不误判违规
-            return challenge
+            return true
         }
         val finishedDate = if (finishedTime.toLocalTime().isBefore(LocalTime.MIDNIGHT)) {
             finishedTime.toLocalDate().minusDays(1)
         } else {
             finishedTime.toLocalDate()
         }
-        return if (date.isAfter(finishedDate)) null else challenge
+        return !date.isAfter(finishedDate)
     }
 
     // 挑战总天数（含开始和截止当天）。
@@ -109,7 +112,7 @@ class ChallengeRepository(
         )
     }
 
-    // 开启新一轮挑战：仅允许在 success / settled 终态下修改同一条记录，并清空旧打卡记录，保证每轮干净开始。
+    // 开启新一轮挑战：仅允许在 success / settled 终态下新增一行，旧轮次与打卡记录保留。
     // 开始日期由用户手动设置（可为今天或未来）。
     suspend fun startNewRound(
         projectId: Long,
@@ -138,9 +141,10 @@ class ChallengeRepository(
             )
         } else {
             if (oldChallenge.status != STATUS_SUCCESS && oldChallenge.status != STATUS_SETTLED) return
-            checkInDao.deleteByChallengeId(oldChallenge.id)
-            challengeDao.update(
-                oldChallenge.copy(
+            // 旧轮次与其打卡记录原样保留，新一轮另起一行
+            challengeDao.insert(
+                ChallengeEntity(
+                    projectId = projectId,
                     goal = goal,
                     dailyStandardPrompt = dailyStandardPrompt,
                     failPenaltyPrompt = failPenaltyPrompt,
@@ -148,7 +152,7 @@ class ChallengeRepository(
                     endDate = endDate,
                     transitionEndDate = transitionEndDate,
                     status = STATUS_ACTIVE,
-                    finishedAt = ""
+                    createdAt = now
                 )
             )
         }

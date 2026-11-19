@@ -264,14 +264,6 @@ object DailyStatusRecorder {
                 return@map ProjectYesterdayCheckStatus(project.name, "challenge", result, null, null, result == false, true)
             }
             val created = try { OffsetDateTime.parse(project.createdAt) } catch (e: Exception) { now }
-            // 过去的日子既没有挑战判定也没有任何落库记录：无法确认当时的模式（可能是已被改写的挑战），不凭空生成缺卡。
-            // 正常流程里每天都会在 00:00 同步时落库，所以真正的普通日一定已有记录。
-            val hasAnySaved = saved.keys.any { it.first == project.id }
-            if (!hasAnySaved && date.isBefore(challengeRepository.currentCheckInDate()) &&
-                challengeRepository.getByProjectId(project.id) != null
-            ) {
-                return@map ProjectYesterdayCheckStatus(project.name, project.checkInMode, null, null, null, false)
-            }
             if (project.checkInMode == "once_per_day") {
                 val r = windowStatus(project.id, "daily", "once_per_day", created, dayStart, dayEnd)
                 ProjectYesterdayCheckStatus(project.name, project.checkInMode, r, null, null, r == false)

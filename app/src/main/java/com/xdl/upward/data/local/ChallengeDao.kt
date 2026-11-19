@@ -9,11 +9,14 @@ import kotlinx.coroutines.flow.Flow
 
 @Dao
 interface ChallengeDao {
-    @Query("SELECT * FROM challenge WHERE project_id = :projectId LIMIT 1")
+    @Query("SELECT * FROM challenge WHERE project_id = :projectId ORDER BY id DESC LIMIT 1")
     fun observeByProjectId(projectId: Long): Flow<ChallengeEntity?>
 
-    @Query("SELECT * FROM challenge WHERE project_id = :projectId LIMIT 1")
+    @Query("SELECT * FROM challenge WHERE project_id = :projectId ORDER BY id DESC LIMIT 1")
     suspend fun getByProjectId(projectId: Long): ChallengeEntity?
+
+    @Query("SELECT * FROM challenge WHERE project_id = :projectId ORDER BY id ASC")
+    suspend fun getAllByProjectId(projectId: Long): List<ChallengeEntity>
 
     @Query("SELECT * FROM challenge WHERE id = :id LIMIT 1")
     suspend fun getById(id: Long): ChallengeEntity?

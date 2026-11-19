@@ -106,7 +106,7 @@ class ProjectEditViewModel(application: Application) : AndroidViewModel(applicat
                 database.withTransaction {
                     database.messageDao().deleteByProjectId(projectId)
                     database.dailyRecordDao().deleteByProjectId(projectId)
-                    database.challengeDao().getByProjectId(projectId)?.let { challenge ->
+                    database.challengeDao().getAllByProjectId(projectId).forEach { challenge ->
                         database.challengeCheckInDao().deleteByChallengeId(challenge.id)
                     }
                     database.challengeDao().deleteByProjectId(projectId)

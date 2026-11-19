@@ -6,13 +6,13 @@ import androidx.room.Index
 import androidx.room.PrimaryKey
 
 /**
- * 项目挑战：每个项目同时只有一条挑战记录（project_id 唯一）。
- * 新一轮挑战是对同一条记录的修改（重置状态、改提示词与截止日期），旧打卡记录在开新一轮时清空。
+ * 项目挑战：每一轮挑战一行，历史轮次与其打卡记录永久保留（日期模式判定依赖它们）。
+ * 项目当前的挑战 = id 最大的一行；同一项目同时只有最新一轮可能是 active。
  * status：active 进行中 / failed 缺卡失败进入惩罚（中间态） / success 成功结算 / settled 失败惩罚完成后结算。
  */
 @Entity(
     tableName = "challenge",
-    indices = [Index(value = ["project_id"], unique = true)]
+    indices = [Index(value = ["project_id"])]
 )
 data class ChallengeEntity(
     @PrimaryKey(autoGenerate = true)

@@ -17,7 +17,7 @@ Android 原生单模块应用（`:app`，包名 `com.xdl.upward`）：按项目�
 
 ## Room 数据库约定
 
-- `data/local/AppDatabase.kt` 中 `version = 20`，手写 Migration 1→20，**没有** `fallbackToDestructiveMigration`。修改实体字段时必须同步加对应 Migration，否则已装用户升级会直接 crash（Room 抛 IllegalStateException）。
+- `data/local/AppDatabase.kt` 中 `version = 21`，手写 Migration 1→21，**没有** `fallbackToDestructiveMigration`。修改实体字段时必须同步加对应 Migration，否则已装用户升级会直接 crash（Room 抛 IllegalStateException）。
 - 新 config 键的默认值要用 `onOpen` 回调里已有的 `INSERT ... WHERE NOT EXISTS` 模式注入。
 - `onOpen` 每次打开都会 `DELETE FROM config WHERE key = 'daily_record_prompt'`，这是有意行为，不要当 bug 修。
 
@@ -31,6 +31,7 @@ Android 原生单模块应用（`:app`，包名 `com.xdl.upward`）：按项目�
   - 违规惩罚通过后：金额取整 N 元，先付清超期罚款，剩余按 1 元抵 1 次逻辑删除最早的有效违规；不再连带结算失败中的挑战（挑战失败惩罚仍需单独捐 3 元）。已移除违规告诫 AI 对话与 `reset_violation_count` 工具。
   - 识别用当前选中的 API（需 `supportImage`），否则用其视觉辅助模型；都没有则直接报错。
 - 请假：违规惩罚页标题栏的请假按钮（`ViolationChatViewModel.requestLeave`），每个自然周（周一~周日，24 点换日）一次，记录在 config `leave_last_date`。效果是清除所有项目的汇报窗口并取消提醒；清除前先对每个项目跑 `RequiredMessageDeadlineHandler.checkAndRecord`，已过期未汇报的窗口照常记违规；没有窗口可清时不消耗次数。
+- **挑战每轮一行**：`challenge` 表不再对 project_id 唯一，开启新一轮是新增一行，旧轮次与打卡记录永久保留；项目当前挑战 = id 最大的一行；`ChallengeRepository.challengeOfDate` 在所有轮次里找覆盖该日期的一轮（失败/结算的轮次以 finishedAt 截止）。`DailyStatusRecorder.computeAndPersist` 对已落库 challenge 记录的日子永远按挑战日处理，不会补写普通缺卡。
 - 挑战可设过渡期：`challenge.transition_end_date`（含当天，空 = 无过渡期，范围 开始日期 ≤ x < 截止日期）。今天处于过渡期时，`ChatExecutor.buildChallengeSystemMessage` 会在提示词里写明“日期1 ~ 日期2 是过渡期，今天是 xxx，属于过渡期”。已开始的挑战只能提前结束或取消过渡期，不能新增或延长。
 - 全局提醒时间存在 config 表：`global_reminder_morning_time` / `afternoon` / `evening`（默认 07:00 / 13:00 / 19:30）；`reminder/GlobalReminderScheduler.kt` 用 `setExactAndAllowWhileIdle` 排程，Android 13+ 需要用户授予精确闹钟权限。`MainActivity.onCreate` 会初始化 config 并 reschedule。
 - Manifest 已开 `usesCleartextTraffic="true"`，允许 http 明文 AI 接口（局域网/127.0.0.1 地址）。
