@@ -39,7 +39,7 @@ class ViolationChatViewModel(application: Application) : AndroidViewModel(applic
     private val projectRepository = ProjectRepository(database.projectDao())
     private val challengeRepository = ChallengeRepository(database.challengeDao(), database.challengeCheckInDao())
 
-    // 请假：每个自然周（周一 ~ 周日，按 24 点（0 点）换日）一次，效果是清除所有项目当前的汇报窗口。
+    // 请假：每个自然周（周一 ~ 周日，按凌晨 4 点换日）一次，效果是清除所有项目当前的汇报窗口。
     // 本周已请假时为请假当天日期，否则为空。
     private val _leaveDateThisWeek = MutableStateFlow("")
     val leaveDateThisWeek: StateFlow<String> = _leaveDateThisWeek.asStateFlow()
@@ -133,7 +133,7 @@ class ViolationChatViewModel(application: Application) : AndroidViewModel(applic
             try {
                 refreshLeaveState()
                 if (_leaveDateThisWeek.value.isNotEmpty()) {
-                    _errorMessage.value = "本周已经请过假了（${_leaveDateThisWeek.value}），下周一 0 点后可再次请假。"
+                    _errorMessage.value = "本周已经请过假了（${_leaveDateThisWeek.value}），下周一凌晨 4 点后可再次请假。"
                     return@launch
                 }
                 val context = getApplication<Application>()

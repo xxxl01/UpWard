@@ -75,7 +75,7 @@ class DailyRecordRepository(
 
     fun todayText(): String {
         val now = OffsetDateTime.now()
-        return if (now.toLocalTime().isBefore(LocalTime.MIDNIGHT)) {
+        return if (now.toLocalTime().isBefore(LocalTime.of(4, 0))) {
             now.toLocalDate().minusDays(1).toString()
         } else {
             now.toLocalDate().toString()

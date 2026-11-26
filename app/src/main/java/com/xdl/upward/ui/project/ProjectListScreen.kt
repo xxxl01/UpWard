@@ -327,11 +327,11 @@ private fun ProjectDayStatusDialog(
                             } else if (item.checkInMode == "once_per_day") {
                                 ProjectPeriodIcon(checked = item.hasMorningMessage, label = "每日")
                             } else {
-                                ProjectPeriodIcon(checked = item.hasMorningMessage, label = "0-13")
+                                ProjectPeriodIcon(checked = item.hasMorningMessage, label = "4-13")
                                 Spacer(modifier = Modifier.width(8.dp))
                                 ProjectPeriodIcon(checked = item.hasAfternoonMessage, label = "13-19:30")
                                 Spacer(modifier = Modifier.width(8.dp))
-                                ProjectPeriodIcon(checked = item.hasEveningMessage, label = "19:30-24")
+                                ProjectPeriodIcon(checked = item.hasEveningMessage, label = "19:30-次日4")
                             }
                         }
                         HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.12f))

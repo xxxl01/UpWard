@@ -163,7 +163,7 @@ class ProjectListViewModel(application: Application) : AndroidViewModel(applicat
         val yesterday = today.minusDays(1)
         // 追踪起点之前已经结束的日子不管
         val trackingStart = DailyStatusRecorder.trackingStartAt(configRepository)
-        val yesterdayEnd = today.atTime(0, 0).atOffset(trackingStart.offset)
+        val yesterdayEnd = today.atTime(4, 0).atOffset(trackingStart.offset)
         if (!yesterdayEnd.isAfter(trackingStart)) {
             configRepository.setValue("violation_checked_date", todayText)
             configRepository.setValue("violation_rule_version", ruleVersion)

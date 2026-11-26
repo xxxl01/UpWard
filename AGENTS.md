@@ -17,7 +17,7 @@ Android 原生单模块应用（`:app`，包名 `com.xdl.upward`）：按项目�
 
 ## Room 数据库约定
 
-- `data/local/AppDatabase.kt` 中 `version = 22`，手写 Migration 1→22（21→22 是 2.9 一次性清零：违规全部逻辑删除 delete_reason=`version_reset`、失败/缺卡挑战直接结算、追踪起点与全勤计数重置，不要当 bug 修），**没有** `fallbackToDestructiveMigration`。修改实体字段时必须同步加对应 Migration，否则已装用户升级会直接 crash（Room 抛 IllegalStateException）。
+- `data/local/AppDatabase.kt` 中 `version = 23`，手写 Migration 1→23（21→22、22→23 是一次性清零（2.9 与 2.10 各一次）：违规全部逻辑删除 delete_reason=`version_reset`、失败/缺卡挑战直接结算、追踪起点与全勤计数重置，不要当 bug 修），**没有** `fallbackToDestructiveMigration`。修改实体字段时必须同步加对应 Migration，否则已装用户升级会直接 crash（Room 抛 IllegalStateException）。
 - 新 config 键的默认值要用 `onOpen` 回调里已有的 `INSERT ... WHERE NOT EXISTS` 模式注入。
 - `onOpen` 每次打开都会 `DELETE FROM config WHERE key = 'daily_record_prompt'`，这是有意行为，不要当 bug 修。
 
@@ -43,7 +43,8 @@ Android 原生单模块应用（`:app`，包名 `com.xdl.upward`）：按项目�
 
 ## 每日达标记录
 
-- **换日时间是 24 点（0 点）**：打卡日就是自然日，时段为 0-13 / 13-19:30 / 19:30-24（`ChallengeRepository.currentCheckInDate` 等）。曾经是凌晨 4 点换日，2.8 起改回。
+- **换日时间是凌晨 4 点**：4 点前仍算前一天，时段为 4-13 / 13-19:30 / 19:30-次日4（`ChallengeRepository.currentCheckInDate` 等）。2.8 曾改成 0 点，2.10 改回 4 点。
+- **早起奖励**（`DailyStatusRecorder.applyEarlyBirdReward`）：某天 9 点前完成全部项目打卡（挑战项目=挑战打卡时间早于 9 点，其余项目=上午时段已发消息；当天 4 点后才创建的项目不参与）记 0.5 次，攒满 2 天抵 1 次违规（逻辑删除最早有效违规，delete_reason=`early_bird`）；config `early_bird_halves` / `early_bird_last_date`。
 
 - **追踪起点**：config `tracking_start_at` 在更新后第一次运行 `DailyStatusRecorder` 时写入（打开/覆盖安装/开机/闹钟），此前已结束的时段不回溯、不落库、不记违规。连续全勤奖励（`applyStreakReward`，不按自然周）：追踪起点之后的整天里，当天有打卡成功且无失败、无违规记录则连续天数 +1，有失败/违规则清零，没有打卡记录的天不增不减；每攒满 7 天减免 1 次违规并重新计数（config `clean_streak_days` / `clean_streak_last_date`）。
 - `daily_status` 表：(项目, 打卡日, 组件 morning/afternoon/evening/daily/challenge) 唯一；`DailyStatusDao.record` 规则：无记录则新增，pending 才可升级为 success/failed，已定的不再改。

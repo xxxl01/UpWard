@@ -37,10 +37,10 @@ class ChallengeRepository(
 
     suspend fun getCheckIns(challengeId: Long): List<ChallengeCheckInEntity> = checkInDao.getByChallengeId(challengeId)
 
-    // 挑战与普通打卡统一在 24 点（0 点）换日。
+    // 挑战与普通打卡统一在凌晨 4 点换日。
     fun currentCheckInDate(): LocalDate {
         val now = OffsetDateTime.now()
-        return if (now.toLocalTime().isBefore(LocalTime.MIDNIGHT)) {
+        return if (now.toLocalTime().isBefore(LocalTime.of(4, 0))) {
             now.toLocalDate().minusDays(1)
         } else {
             now.toLocalDate()
@@ -66,7 +66,7 @@ class ChallengeRepository(
             // 旧数据没有 finishedAt：整个挑战周期都按挑战日算，宁可豁免也不误判违规
             return true
         }
-        val finishedDate = if (finishedTime.toLocalTime().isBefore(LocalTime.MIDNIGHT)) {
+        val finishedDate = if (finishedTime.toLocalTime().isBefore(LocalTime.of(4, 0))) {
             finishedTime.toLocalDate().minusDays(1)
         } else {
             finishedTime.toLocalDate()

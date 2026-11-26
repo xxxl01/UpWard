@@ -21,13 +21,13 @@ class MessageRepository(
 
     suspend fun getTodayMessages(projectId: Long): List<MessageEntity> {
         val now = OffsetDateTime.now()
-        val businessDate = if (now.toLocalTime().isBefore(LocalTime.MIDNIGHT)) {
+        val businessDate = if (now.toLocalTime().isBefore(LocalTime.of(4, 0))) {
             now.toLocalDate().minusDays(1)
         } else {
             now.toLocalDate()
         }
-        val startTime = businessDate.atTime(0, 0).atOffset(now.offset).toString()
-        val endTime = businessDate.plusDays(1).atTime(0, 0).atOffset(now.offset).toString()
+        val startTime = businessDate.atTime(4, 0).atOffset(now.offset).toString()
+        val endTime = businessDate.plusDays(1).atTime(4, 0).atOffset(now.offset).toString()
         return messageDao.getMessagesBetween(projectId, startTime, endTime)
     }
 

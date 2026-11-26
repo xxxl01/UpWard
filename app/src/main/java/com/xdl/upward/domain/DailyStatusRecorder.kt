@@ -20,6 +20,8 @@ object DailyStatusRecorder {
     private const val KEY_TRACKING_START = "tracking_start_at"
     private const val KEY_STREAK_LAST = "clean_streak_last_date"
     private const val KEY_STREAK_DAYS = "clean_streak_days"
+    private const val KEY_EARLY_LAST = "early_bird_last_date"
+    private const val KEY_EARLY_HALVES = "early_bird_halves"
     private const val STREAK_DAYS = 7
     private const val MAX_BACKFILL_DAYS = 90L
     private val mutex = Mutex()
@@ -58,9 +60,65 @@ object DailyStatusRecorder {
         computeAndPersist(context, today)
         recordViolations(context, today)
         applyStreakReward(context, today)
+        applyEarlyBirdReward(context, today)
     }
 
-    /** 追踪起点（首次运行时写入）；打卡日口径（24 点换日，即自然日）。 */
+    /**
+     * 早起奖励：某天（4 点换日）9 点前完成全部项目的打卡——挑战项目要挑战打卡、其余项目要在上午时段发出消息——
+     * 记 0.5 次，攒满 1 次（两天）逻辑删除最早的 1 条有效违规（delete_reason = early_bird）。
+     * 当天 9 点之后才创建的项目不参与；没有任何参与项目的天不算。只结算已结束的日子，且在追踪起点之后。
+     */
+    private suspend fun applyEarlyBirdReward(context: Context, today: LocalDate) {
+        val database = AppDatabase.getInstance(context)
+        val configRepository = ConfigRepository(database.configDao())
+        val startDate = trackingStartDate(configRepository)
+        val yesterday = today.minusDays(1)
+        val last = configRepository.getValue(KEY_EARLY_LAST)?.let { runCatching { LocalDate.parse(it) }.getOrNull() } ?: startDate
+        var halves = configRepository.getValue(KEY_EARLY_HALVES)?.toIntOrNull() ?: 0
+        var date = last.plusDays(1)
+        if (date.isAfter(yesterday)) return
+        val violationDao = database.violationRecordDao()
+        while (!date.isAfter(yesterday)) {
+            if (qualifiesEarly(context, date)) halves++
+            if (halves >= 2) {
+                if (violationDao.activeCount() > 0) {
+                    violationDao.logicalDeleteOldest(1, OffsetDateTime.now().toString(), "early_bird", 0)
+                    halves -= 2
+                } else {
+                    halves = 1 // 没有违规可抵，最多保留 0.5 次，不无限囤积
+                }
+            }
+            date = date.plusDays(1)
+        }
+        configRepository.setValue(KEY_EARLY_HALVES, halves.toString())
+        configRepository.setValue(KEY_EARLY_LAST, yesterday.toString())
+    }
+
+    private suspend fun qualifiesEarly(context: Context, date: LocalDate): Boolean {
+        val database = AppDatabase.getInstance(context)
+        val challengeRepository = ChallengeRepository(database.challengeDao(), database.challengeCheckInDao())
+        val messageRepository = MessageRepository(database.messageDao())
+        val offset = OffsetDateTime.now().offset
+        val dayStart = date.atTime(4, 0).atOffset(offset)
+        val cutoff = date.atTime(9, 0).atOffset(offset)
+        val projects = ProjectRepository(database.projectDao()).getProjects().filter {
+            val created = runCatching { OffsetDateTime.parse(it.createdAt) }.getOrNull()
+            created != null && !created.isAfter(dayStart)
+        }
+        if (projects.isEmpty()) return false
+        return projects.all { project ->
+            val challenge = challengeRepository.challengeOfDate(project.id, date)
+            if (challenge != null) {
+                val checkIn = challengeRepository.getCheckIns(challenge.id).firstOrNull { it.date == date.toString() }
+                val at = checkIn?.let { runCatching { OffsetDateTime.parse(it.createdAt) }.getOrNull() }
+                at != null && at.isBefore(cutoff)
+            } else {
+                messageRepository.hasUserMessagesBetween(project.id, dayStart.toString(), cutoff.toString())
+            }
+        }
+    }
+
+    /** 追踪起点（首次运行时写入）；打卡日口径（凌晨 4 点换日）。 */
     suspend fun trackingStartAt(configRepository: ConfigRepository): OffsetDateTime {
         configRepository.getValue(KEY_TRACKING_START)
             ?.let { runCatching { OffsetDateTime.parse(it) }.getOrNull() }
@@ -72,7 +130,7 @@ object DailyStatusRecorder {
 
     private suspend fun trackingStartDate(configRepository: ConfigRepository): LocalDate {
         val at = trackingStartAt(configRepository)
-        return if (at.toLocalTime().isBefore(java.time.LocalTime.MIDNIGHT)) at.toLocalDate().minusDays(1) else at.toLocalDate()
+        return if (at.toLocalTime().isBefore(java.time.LocalTime.of(4, 0))) at.toLocalDate().minusDays(1) else at.toLocalDate()
     }
 
     /**
@@ -163,7 +221,7 @@ object DailyStatusRecorder {
             dao.record(projectId, dateText, "daily", "once_per_day", DailyStatusEntity.SUCCESS)
             return
         }
-        val dayStart = date.atTime(0, 0).atOffset(now.offset)
+        val dayStart = date.atTime(4, 0).atOffset(now.offset)
         val noon = date.atTime(13, 0).atOffset(now.offset)
         val evening = date.atTime(19, 30).atOffset(now.offset)
         val (component, start) = when {
@@ -191,10 +249,10 @@ object DailyStatusRecorder {
             .associateBy { it.projectId to it.component }
         val now = OffsetDateTime.now()
         val offset = now.offset
-        val dayStart = date.atTime(0, 0).atOffset(offset)
+        val dayStart = date.atTime(4, 0).atOffset(offset)
         val noon = date.atTime(13, 0).atOffset(offset)
         val evening = date.atTime(19, 30).atOffset(offset)
-        val dayEnd = date.plusDays(1).atTime(0, 0).atOffset(offset)
+        val dayEnd = date.plusDays(1).atTime(4, 0).atOffset(offset)
         val trackingStart = trackingStartAt(configRepository)
 
         // 返回 Pair(是否适用, 状态)；start/end 为该时段窗口。

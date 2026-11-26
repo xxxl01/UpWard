@@ -218,7 +218,7 @@ private fun ProjectCheckInModeBlock(
         Spacer(modifier = Modifier.height(8.dp))
         ProjectCheckInModeOption(
             title = "三时段打卡",
-            description = "0-13、13-19:30、19:30-24 三个时段都要打卡。",
+            description = "4-13、13-19:30、19:30-次日4 三个时段都要打卡。",
             selected = checkInMode == "three_times",
             onClick = { onChange("three_times") }
         )

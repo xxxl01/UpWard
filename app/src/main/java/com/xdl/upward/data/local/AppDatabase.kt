@@ -22,7 +22,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         ViolationRecordEntity::class,
         NotificationRecordEntity::class
     ],
-    version = 22,
+    version = 23,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -350,9 +350,20 @@ abstract class AppDatabase : RoomDatabase() {
         // 2.9 一次性清零：挑战重构 + 缺卡误判修复后，升级前累积的违规与挑战惩罚大量是误记的，全部清除，从头开始。
         // 违规记录只做逻辑删除（保留历史），失败/缺卡中的挑战直接结算，连续全勤计数与追踪起点重置。
         private val MIGRATION_21_22 = object : Migration(21, 22) {
-            override fun migrate(db: SupportSQLiteDatabase) {
+            override fun migrate(db: SupportSQLiteDatabase) = resetPenalties(db)
+        }
+
+        // 2.10 再清零一次（换日改回凌晨 4 点 + 早起奖励上线），逻辑同 21→22
+        private val MIGRATION_22_23 = object : Migration(22, 23) {
+            override fun migrate(db: SupportSQLiteDatabase) = resetPenalties(db)
+        }
+
+        private fun resetPenalties(db: SupportSQLiteDatabase) {
+            run {
                 val now = java.time.OffsetDateTime.now().toString()
-                val today = java.time.LocalDate.now()
+                val nowTime = java.time.OffsetDateTime.now()
+                // 打卡日：凌晨 4 点换日
+                val today = if (nowTime.toLocalTime().isBefore(java.time.LocalTime.of(4, 0))) nowTime.toLocalDate().minusDays(1) else nowTime.toLocalDate()
                 db.execSQL(
                     "UPDATE violation_record SET deleted = 1, deleted_at = ?, delete_reason = 'version_reset' WHERE deleted = 0",
                     arrayOf(now)
@@ -388,6 +399,8 @@ abstract class AppDatabase : RoomDatabase() {
                 }
                 setConfig("tracking_start_at", now)
                 setConfig("clean_streak_days", "0")
+                setConfig("early_bird_halves", "0")
+                setConfig("early_bird_last_date", today.minusDays(1).toString())
                 setConfig("clean_streak_last_date", today.minusDays(1).toString())
             }
         }
@@ -399,7 +412,7 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     "upward.db"
                 )
-                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22)
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22, MIGRATION_22_23)
                     .addCallback(object : Callback() {
                         override fun onOpen(db: SupportSQLiteDatabase) {
                             super.onOpen(db)
