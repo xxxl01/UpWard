@@ -64,9 +64,9 @@ object DailyStatusRecorder {
     }
 
     /**
-     * 早起奖励：某天（4 点换日）9 点前完成全部项目的打卡——挑战项目要挑战打卡、其余项目要在上午时段发出消息——
+     * 早起奖励：某天（4 点换日）晚上 22 点前完成全部项目的打卡——挑战项目要挑战打卡、一天一次的项目要有消息、三时段项目上/下/晚三个时段（晚上时段算到 22 点）都要有消息——
      * 记 0.5 次，攒满 1 次（两天）逻辑删除最早的 1 条有效违规（delete_reason = early_bird）。
-     * 当天 9 点之后才创建的项目不参与；没有任何参与项目的天不算。只结算已结束的日子，且在追踪起点之后。
+     * 当天 22 点之后才创建的项目不参与，三时段项目在时段开始后才创建的该时段不要求；没有任何参与项目的天不算。只结算已结束的日子，且在追踪起点之后。
      */
     private suspend fun applyEarlyBirdReward(context: Context, today: LocalDate) {
         val database = AppDatabase.getInstance(context)
@@ -100,22 +100,31 @@ object DailyStatusRecorder {
         val messageRepository = MessageRepository(database.messageDao())
         val offset = OffsetDateTime.now().offset
         val dayStart = date.atTime(4, 0).atOffset(offset)
-        val cutoff = date.atTime(9, 0).atOffset(offset)
-        val projects = ProjectRepository(database.projectDao()).getProjects().filter {
-            val created = runCatching { OffsetDateTime.parse(it.createdAt) }.getOrNull()
-            created != null && !created.isAfter(dayStart)
-        }
-        if (projects.isEmpty()) return false
-        return projects.all { project ->
+        val noon = date.atTime(13, 0).atOffset(offset)
+        val evening = date.atTime(19, 30).atOffset(offset)
+        val cutoff = date.atTime(22, 0).atOffset(offset)
+        var participants = 0
+        for (project in ProjectRepository(database.projectDao()).getProjects()) {
+            val created = runCatching { OffsetDateTime.parse(project.createdAt) }.getOrNull() ?: continue
+            if (created.isAfter(cutoff)) continue
+            participants++
             val challenge = challengeRepository.challengeOfDate(project.id, date)
-            if (challenge != null) {
+            val ok = if (challenge != null) {
                 val checkIn = challengeRepository.getCheckIns(challenge.id).firstOrNull { it.date == date.toString() }
                 val at = checkIn?.let { runCatching { OffsetDateTime.parse(it.createdAt) }.getOrNull() }
                 at != null && at.isBefore(cutoff)
-            } else {
+            } else if (project.checkInMode == "once_per_day") {
                 messageRepository.hasUserMessagesBetween(project.id, dayStart.toString(), cutoff.toString())
+            } else {
+                // 三时段：每个适用的时段（项目在时段开始前已创建）都要有消息，晚上时段只算到 22 点
+                listOf(dayStart to noon, noon to evening, evening to cutoff).all { (start, end) ->
+                    created.isAfter(start) ||
+                        messageRepository.hasUserMessagesBetween(project.id, start.toString(), end.toString())
+                }
             }
+            if (!ok) return false
         }
+        return participants > 0
     }
 
     /** 追踪起点（首次运行时写入）；打卡日口径（凌晨 4 点换日）。 */

@@ -44,7 +44,7 @@ Android 原生单模块应用（`:app`，包名 `com.xdl.upward`）：按项目�
 ## 每日达标记录
 
 - **换日时间是凌晨 4 点**：4 点前仍算前一天，时段为 4-13 / 13-19:30 / 19:30-次日4（`ChallengeRepository.currentCheckInDate` 等）。2.8 曾改成 0 点，2.10 改回 4 点。
-- **早起奖励**（`DailyStatusRecorder.applyEarlyBirdReward`）：某天 9 点前完成全部项目打卡（挑战项目=挑战打卡时间早于 9 点，其余项目=上午时段已发消息；当天 4 点后才创建的项目不参与）记 0.5 次，攒满 2 天抵 1 次违规（逻辑删除最早有效违规，delete_reason=`early_bird`）；config `early_bird_halves` / `early_bird_last_date`。
+- **早起奖励**（`DailyStatusRecorder.applyEarlyBirdReward`）：某天晚上 22 点前完成全部项目打卡（挑战项目=挑战打卡早于 22 点，一天一次=22 点前有消息，三时段=上/下/晚三个时段都有消息、晚上时段算到 22 点；22 点后才创建的项目不参与）记 0.5 次，攒满 2 天抵 1 次违规（逻辑删除最早有效违规，delete_reason=`early_bird`）；config `early_bird_halves` / `early_bird_last_date`。
 
 - **追踪起点**：config `tracking_start_at` 在更新后第一次运行 `DailyStatusRecorder` 时写入（打开/覆盖安装/开机/闹钟），此前已结束的时段不回溯、不落库、不记违规。连续全勤奖励（`applyStreakReward`，不按自然周）：追踪起点之后的整天里，当天有打卡成功且无失败、无违规记录则连续天数 +1，有失败/违规则清零，没有打卡记录的天不增不减；每攒满 7 天减免 1 次违规并重新计数（config `clean_streak_days` / `clean_streak_last_date`）。
 - `daily_status` 表：(项目, 打卡日, 组件 morning/afternoon/evening/daily/challenge) 唯一；`DailyStatusDao.record` 规则：无记录则新增，pending 才可升级为 success/failed，已定的不再改。
